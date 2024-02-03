@@ -68,7 +68,7 @@ bd::String decrypt_string(const bd::String& key, const bd::String& data) {
 }
 
 /**
- * @brief Decrypt anAES 256 CBC ciphered string
+ * @brief Decrypt an AES 256 CBC ciphered string
  * @param key The key to decrypt with
  * @param data The string to decrypt
  * @param IV The IV to use (WARNING: This is modified inplace)
