@@ -34,9 +34,11 @@
 
 #include "libssl.h"
 #include "libcrypto.h"
+#include "ssl_config.h"
 
 #ifdef EGG_SSL_EXT
 SSL_CTX *ssl_ctx = NULL;
+SSL_CTX *server_ssl_ctx = NULL;
 char	*tls_rand_file = NULL;
 #endif
 int     ssl_use = 0; /* kyotou */
@@ -78,32 +80,51 @@ int init_openssl() {
   /* good place to init ssl stuff */
   SSL_load_error_strings();
   OpenSSL_add_ssl_algorithms();
-#if (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER > 0x20020002L) || \
-    (!defined(LIBRESSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L)
-  ssl_ctx = SSL_CTX_new(TLS_client_method());
-#else
-  ssl_ctx = SSL_CTX_new(SSLv23_client_method());
-#endif
+
+  /* Strict context: botnet links (TLS 1.2+ only) */
+  ssl_ctx = SSL_CTX_new(WRAITH_SSL_CLIENT_METHOD());
   if (!ssl_ctx) {
     sdprintf("SSL_CTX_new() failed");
     return 1;
   }
 
-  // Disable insecure SSLv2
-  SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2|SSL_OP_SINGLE_DH_USE);
-  SSL_CTX_set_mode(ssl_ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER|SSL_MODE_ENABLE_PARTIAL_WRITE);
+  SSL_CTX_set_options(ssl_ctx, WRAITH_SSL_OPTIONS);
+  SSL_CTX_set_mode(ssl_ctx, WRAITH_SSL_MODES);
   SSL_CTX_set_tmp_dh_callback(ssl_ctx, tmp_dh_callback);
 
-  const char* ciphers = "HIGH:!MEDIUM:!LOW:!EXP:!SSLv2:!ADH:!aNULL:!eNULL:!NULL:@STRENGTH";
-  if (!SSL_CTX_set_cipher_list(ssl_ctx, ciphers)) {
-    sdprintf("Unable to load ciphers");
+  if (!SSL_CTX_set_cipher_list(ssl_ctx, WRAITH_SSL_CIPHER_LIST)) {
+    sdprintf("Unable to load ciphers for ssl_ctx");
     return 1;
   }
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+  SSL_CTX_set_ciphersuites(ssl_ctx, WRAITH_SSL_CIPHERSUITES);
+#endif
+
+  /* Relaxed context: IRC servers (allows TLS 1.0/1.1 for compatibility) */
+  server_ssl_ctx = SSL_CTX_new(WRAITH_SSL_CLIENT_METHOD());
+  if (!server_ssl_ctx) {
+    sdprintf("SSL_CTX_new() for server_ssl_ctx failed");
+    return 1;
+  }
+
+  SSL_CTX_set_options(server_ssl_ctx, WRAITH_SSL_OPTIONS);
+  SSL_CTX_set_mode(server_ssl_ctx, WRAITH_SSL_MODES);
+  SSL_CTX_set_tmp_dh_callback(server_ssl_ctx, tmp_dh_callback);
+
+  if (!SSL_CTX_set_cipher_list(server_ssl_ctx, WRAITH_SSL_CIPHER_LIST)) {
+    sdprintf("Unable to load ciphers for server_ssl_ctx");
+    return 1;
+  }
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+  SSL_CTX_set_ciphersuites(server_ssl_ctx, WRAITH_SSL_CIPHERSUITES);
+#endif
 
   if (seed_PRNG()) {
     sdprintf("Wasn't able to properly seed the PRNG!");
     SSL_CTX_free(ssl_ctx);
     ssl_ctx = NULL;
+    SSL_CTX_free(server_ssl_ctx);
+    server_ssl_ctx = NULL;
     return 1;
   }
 #endif
@@ -121,6 +142,10 @@ int uninit_openssl () {
   if (ssl_ctx) {
     SSL_CTX_free(ssl_ctx);
     ssl_ctx = NULL;
+  }
+  if (server_ssl_ctx) {
+    SSL_CTX_free(server_ssl_ctx);
+    server_ssl_ctx = NULL;
   }
   if (tls_rand_file)
     RAND_write_file(tls_rand_file);

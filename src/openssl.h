@@ -13,6 +13,7 @@
 
 #ifdef EGG_SSL_EXT
 extern SSL_CTX *ssl_ctx;
+extern SSL_CTX *server_ssl_ctx;
 extern char *tls_rand_file;
 #endif
 extern int ssl_use;

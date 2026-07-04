@@ -759,7 +759,7 @@ readsocks(const char *fname)
       nuke_server("emoquit");
     } else {
       simple_snprintf(nserv, sizeof(nserv), "%s:%d", dcc[servidx].host, dcc[servidx].port);
-      add_server(nserv);
+      add_server(nserv, (server_using_ssl != 0));
       curserv = 0;
       keepnick = 0; /* Wait to change nicks until relinking, fixes nick/jupenick switching issues during restart */
       reset_flood();

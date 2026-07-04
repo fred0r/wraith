@@ -28,6 +28,8 @@
 
 char cursrvname[120] = "";
 char curnetwork[120] = "";
+char server_ipver[8] = "";
+int server_using_ssl = 0;
 static time_t last_ctcp    = (time_t) 0L;
 static int    count_ctcp   = 0;
 char   altnick_char = 0;
@@ -1056,6 +1058,7 @@ static int gotpong(char *from, char *msg)
   fixcolon(msg);		/* Scrap server name */
 
   server_lag = now - my_atoul(msg);
+  waiting_for_awake = 0;
 
   if (server_lag > 99999) {
     /* IRCnet lagmeter support by drummer */
@@ -1467,6 +1470,8 @@ void irc_init();
 static void disconnect_server(int idx)
 {
   server_online = 0;
+  server_using_ssl = 0;
+  server_ipver[0] = 0;
   if ((serv != dcc[idx].sock) && serv >= 0)
     killsock(serv);
   if (dcc[idx].sock >= 0)
@@ -1563,11 +1568,7 @@ static void server_activity(int idx, char *msg, int len)
 
   if (unlikely(trying_server)) {
     strlcpy(dcc[idx].nick, "(server)", sizeof(dcc[idx].nick));
-    if (ssl_use) {
-      putlog(LOG_SERV, "*", "Connected to %s with SSL", dcc[idx].host);
-    } else {
-      putlog(LOG_SERV, "*", "Connected to %s", dcc[idx].host);
-    }
+    putlog(LOG_SERV, "*", "Connected to %s [%s]%s", dcc[idx].host, server_ipver, server_using_ssl ? " [SSL]" : "");
 
     trying_server = 0;
     /*
@@ -2128,11 +2129,7 @@ static void connect_server(void)
 
     next_server(&curserv, botserver, &botserverport, pass);
 
-    if (ssl_use) {
-      putlog(LOG_SERV, "*", "Trying SSL server %s:%d", botserver, botserverport);
-    } else {
-      putlog(LOG_SERV, "*", "Trying server %s:%d", botserver, botserverport);
-    }
+    putlog(LOG_SERV, "*", "Connecting to server %s:%d", botserver, botserverport);
 
     dcc[newidx].port = botserverport;
     strlcpy(dcc[newidx].nick, "(server)", sizeof(dcc[newidx].nick));
@@ -2221,33 +2218,72 @@ static void server_dns_callback(int id, void *client_data, const char *host,
   strlcpy(serverpass, (char *) dcc[idx].u.dns->caller_data, sizeof(serverpass));
   changeover_dcc(idx, &SERVER_SOCKET, 0);
 
-  //No proxy, use identd, 2 = spoof ident
-  serv = open_telnet(ip, dcc[idx].port, 0, 2);
+  {
+    const char *ipver = (addr.family == AF_INET6) ? "IPv6" : "IPv4";
+    strlcpy(server_ipver, ipver, sizeof(server_ipver));
 
-  if (serv < 0) {
-    putlog(LOG_SERV, "*", "Failed connect to %s (%s)", dcc[idx].host, strerror(errno));
-    trying_server = 0;
-    lostdcc(idx);
-  } else {
-    int i = 1;
+    int sock = -1;
+    in_port_t chosen_port = 0;
+    bool chosen_ssl = false;
 
-    /* set these now so if we fail disconnect_server() can cleanup right. */
-    dcc[idx].sock = serv;
-    servidx = idx;
-    sdprintf("Connecting to '%s' (serv: %d, servidx: %d)", dcc[idx].host, serv, servidx);
-    setsockopt(serv, 6, TCP_NODELAY, &i, sizeof(int));
-#ifdef EGG_SSL_EXT
-    if (ssl_use) { /* kyotou */
-      if (net_switch_to_ssl(serv) == 0) {
-        putlog(LOG_SERV, "*", "SSL Failed to connect to %s (Error while switching to SSL)", dcc[servidx].host);
-        trying_server = 0;
-        lostdcc(servidx);
-        delete[] ip;
-        return;
+    for (int pass = 0; pass < 2 && sock < 0; pass++) {
+      bool is_ssl;
+      in_port_t try_port;
+
+      if (pass == 0 && effective_ssl_use() >= 1) {
+        is_ssl = true;
+        try_port = dcc[idx].port;
+      } else if (pass == 0) {
+        is_ssl = false;
+        try_port = dcc[idx].port;
+      } else if (pass == 1 && effective_ssl_use() == 2) {
+        is_ssl = false;
+        try_port = default_port;
+      } else
+        break;
+
+      putlog(LOG_SERV, "*", "%s %s:%d [%s]",
+             is_ssl ? "Trying SSL server" : "Trying server",
+             host, try_port, ipver);
+
+      sock = open_telnet(ip, try_port, 0, 2);
+      if (sock < 0) {
+        putlog(LOG_SERV, "*", "Failed connect to %s:%d (%s)", host, try_port, strerror(errno));
+        continue;
       }
-    }
+
+#ifdef EGG_SSL_EXT
+      if (is_ssl) {
+        if (net_switch_to_ssl(sock) == 0) {
+          putlog(LOG_SERV, "*", "SSL Failed to connect to %s:%d (Error while switching to SSL)", host, try_port);
+          killsock(sock);
+          sock = -1;
+          continue;
+        }
+        chosen_ssl = true;
+      }
 #endif
-    /* Queue standard login */
+      chosen_port = try_port;
+    }
+
+    if (sock < 0) {
+      trying_server = 0;
+      lostdcc(idx);
+      delete[] ip;
+      return;
+    }
+
+    dcc[idx].port = chosen_port;
+    server_using_ssl = chosen_ssl ? 1 : 0;
+    serv = sock;
+    dcc[idx].sock = sock;
+    servidx = idx;
+
+    sdprintf("Connecting to '%s' (serv: %d, servidx: %d)", dcc[idx].host, serv, servidx);
+  }
+
+  {
+    int i = 1;
     dcc[idx].timeval = now;
     SERVER_SOCKET.timeout_val = &server_timeout;
     /* Another server may have truncated it, so use the original */
@@ -2271,7 +2307,6 @@ static void server_dns_callback(int id, void *client_data, const char *host,
       dprintf(DP_MODE, "PASS %s\n", serverpass);
     dprintf(DP_MODE, "NICK %s\n", botname);
     dprintf(DP_MODE, "USER %s localhost %s :%s\n", botuser, dcc[idx].host, replace_vars(botrealname));
-    /* Wait for async result now */
   }
 
   delete[] ip;

@@ -34,6 +34,7 @@ struct server_list {
   char			*name;
   char			*pass;
   in_port_t		 port;
+  bool			 ssl;
 };
 
 /* Available net types.  */
@@ -61,6 +62,10 @@ extern unsigned int     rolls;
 extern in_port_t		default_port, default_port_ssl, newserverport, curservport;
 extern time_t		server_online, tried_jupenick, tried_nick, release_time, connect_bursting;
 extern interval_t	cycle_time;
+extern char		server_ipver[];
+extern int		server_using_ssl;
+extern int		ssl_use;
+int effective_ssl_use();
 extern char		cursrvname[], botrealname[121], botuserhost[], ctcp_reply[1024],
 			newserver[], newserverpass[], curnetwork[], botuserip[], altnick_char, deaf_char, callerid_char;
 extern struct server_list *serverlist;
@@ -80,7 +85,7 @@ void server_report(int, int);
 void server_init();
 void queue_server(int, char *, int);
 void server_die();
-void add_server(char *);
+void add_server(char *, bool ssl = false);
 void clearq(struct server_list *);
 void nuke_server(const char *);
 bool match_my_nick(const char *);

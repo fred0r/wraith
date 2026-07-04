@@ -80,6 +80,10 @@ static int load_symbols(void *handle) {
   /* Macro in 1.0 and LibreSSL. Symbol in 1.1+. */
   DLSYM_GLOBAL(handle, SSL_CTX_set_options);
 #endif
+#if !defined(LIBRESSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10101000L
+  /* TLS 1.3 cipher suites. Symbol in OpenSSL 1.1.1+. */
+  DLSYM_GLOBAL(handle, SSL_CTX_set_ciphersuites);
+#endif
 #if (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER > 0x20020002L) || \
     (!defined(LIBRESSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L)
   /* Not in 1.0. Symbol in 1.1+ and LibreSSL 2.2+ 0x20020002L. */
@@ -98,7 +102,7 @@ static int load_symbols(void *handle) {
 
 
 int load_libssl() {
-  if (ssl_ctx) {
+  if (ssl_ctx || server_ssl_ctx) {
     return 0;
   }
 

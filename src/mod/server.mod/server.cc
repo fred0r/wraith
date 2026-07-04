@@ -741,9 +741,20 @@ void queue_server(int which, char *buf, int len)
   deq_msg();
 }
 
+/* When ssl_use=2, only +c (BOT_CHANHUB) bots connect via SSL to IRC. */
+int effective_ssl_use()
+{
+  if (ssl_use == 2) {
+    if (!conf.bot->hub && conf.bot->u && (conf.bot->u->flags & BOT_CHANHUB))
+      return 1;
+    return 0;
+  }
+  return ssl_use;
+}
+
 /* Add a new server to the server_list.
  */
-void add_server(char *ss)
+void add_server(char *ss, bool ssl)
 {
   struct server_list *x = NULL, *z = NULL;
   char *p = NULL, *q = NULL;
@@ -758,6 +769,7 @@ void add_server(char *ss)
 
     x->next = 0;
     x->port = 0;
+    x->ssl = ssl;
     if (z)
       z->next = x;
     else
@@ -840,7 +852,8 @@ void next_server(int *ptr, char *servname, in_port_t *port, char *pass)
 
     x->next = 0;
     x->name = strdup(servname);
-    x->port = *port ? *port : (ssl_use ? default_port_ssl : default_port);
+    x->port = *port ? *port : (effective_ssl_use() ? default_port_ssl : default_port);
+    x->ssl = (effective_ssl_use() >= 1);
     if (pass && pass[0]) {
       x->pass = strdup(pass);
     } else
@@ -863,10 +876,34 @@ void next_server(int *ptr, char *servname, in_port_t *port, char *pass)
     x = serverlist;
     *ptr = 0;
   }				/* Start over at the beginning */
-  strcpy(servname, x->name);
-  *port = x->port ? x->port : (ssl_use ? default_port_ssl : default_port);
+
+  /* Skip entries whose SSL flag doesn't match current ssl_use */
+  if (x != NULL) {
+    struct server_list *scan = x;
+    bool ssl_wanted = (effective_ssl_use() >= 1);
+    do {
+      if (x->ssl == ssl_wanted)
+        break;
+      x = x->next;
+      (*ptr)++;
+      if (x == NULL) {
+        x = serverlist;
+        *ptr = 0;
+      }
+      if (x == NULL)
+        break;
+    } while (x != scan);
+  }
+  if (x == NULL) {
+    servname[0] = 0;
+    *port = effective_ssl_use() ? default_port_ssl : default_port;
+    pass[0] = 0;
+    return;
+  }
+  strlcpy(servname, x->name, UHOSTLEN);
+  *port = x->port ? x->port : (effective_ssl_use() ? default_port_ssl : default_port);
   if (x->pass)
-    strcpy(pass, x->pass);
+    strlcpy(pass, x->pass, 121);
   else
     pass[0] = 0;
 }

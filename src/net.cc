@@ -46,6 +46,7 @@
 #include <string.h>
 #include <netdb.h>
 #include <signal.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <setjmp.h>
@@ -627,10 +628,20 @@ int net_switch_to_ssl(int sock) {
   int i = 0;
 
   debug0("net_switch_to_ssl()");
-  sleep(3); // Give some time to let the connect() go through.
+
+  /* Wait for the connect() to complete using poll() instead of sleep() */
+  struct pollfd pfd;
+  pfd.fd = sock;
+  pfd.events = POLLOUT | POLLERR;
+  int pollret = poll(&pfd, 1, 5000); /* 5 second timeout */
+  if (pollret <= 0) {
+    debug0("net_switch_to_ssl(): poll() timeout or error");
+    return 0;
+  }
+
   i = findanysnum(sock);
-  if (i == MAXSOCKS) {
-    debug0("Error while swithing to SSL - sock not found in list");
+  if (i == -1) {
+    debug0("Error while switching to SSL - sock not found in list");
     return 0;
   }
 
@@ -757,7 +768,7 @@ int open_address_listen(const char* ip, in_port_t *port) {
     else
       debug3("Opening listen socket on %s:%d with AF_INET, sock: %d", ip, *port, sock);
 
-    bzero((char *) &name, sizeof(struct sockaddr *));
+    bzero((char *) &name, sizeof(name));
     if (af_def == AF_UNIX) {
       name.sock_un.sun_family = AF_UNIX;
       strcpy(name.sock_un.sun_path, ip);
@@ -1620,9 +1631,14 @@ bool socket_run() {
   } else
     --socket_cleanup;
 
-  int xx = sockgets(buf, &i);
+  int xx = -1;
+  int drain = 0;
 
-  if (xx >= 0) {		/* Non-error */
+  /* Drain loop: process up to 20 buffered lines per call to handle IRC bursts */
+  do {
+    xx = sockgets(buf, &i);
+
+    if (xx >= 0) {		/* Non-error */
     if ((idx = findanyidx(xx)) != -1) {
       if (likely(dcc[idx].type->activity)) {
         /* Traffic stats */
@@ -1686,6 +1702,10 @@ bool socket_run() {
     socket_cleanup = 0;	/* If we've been idle, cleanup & flush */
     return 1;
   }
+
+  /* Continue drain loop if we got data and haven't hit the limit */
+  } while (xx >= 0 && ++drain < 20);
+
   return 0;
 }
 /* vim: set sts=2 sw=2 ts=8 et: */

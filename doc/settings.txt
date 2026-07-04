@@ -12,45 +12,55 @@ list set list
 -bot -user
 +bot newleaf
 
-# From http://stats.efnet.org with hubs removed
+# From http://www.efnet.org (updated 2026-04-26)
 :servers
 #US
 irc.choopa.net
 irc.colosolutions.net
+irc.deft.com
 irc.mzima.net
-irc.servercentral.net
+irc.prison.net
 #EU
-efnet.port80.se
-efnet.portlane.se
+efnet.deic.eu
 irc.du.se
-irc.efnet.fr
+irc.efnet.nl
+efnet.tngnet.nl
 irc.homelien.no
-irc.inet.tele.dk
 irc.underworld.no
-irc.nordunet.se
+irc.swepipe.se
 
 :servers6
-efnet.ipv6.port80.se
-efnet.portlane.se
+efnet.deic.eu
+efnet.tngnet.nl
 irc.choopa.net
-irc.inet.tele.dk
-irc.ipv6.homelien.no
+irc.efnet.nl
+irc.homelien.no
+irc.mzima.net
+irc.swepipe.se
 irc.underworld.no
-irc.nordunet.se
 
 :servers_ssl
 irc.choopa.net:9999
-irc.servercentral.net:9999
-irc.underworld.no
-irc.nordunet.se
-efnet.port80.se
+irc.colosolutions.net:9999
+irc.deft.com:9999
+irc.mzima.net:9999
+irc.prison.net:9999
+efnet.deic.eu:9999
+irc.du.se:9999
+irc.efnet.nl:9999
+efnet.tngnet.nl:9999
+irc.underworld.no:9999
+irc.swepipe.se:9999
 
 :servers6_ssl
+efnet.deic.eu:9999
+efnet.tngnet.nl:9999
 irc.choopa.net:9999
-irc.underworld.no
-irc.ipv6.homelien.no
-efnet.ipv6.port80.se
-irc.nordunet.se
+irc.efnet.nl:9999
+irc.homelien.no:6697
+irc.mzima.net:9999
+irc.swepipe.se:9999
+irc.underworld.no:9999
 
 :rbl
 dnsbl.proxybl.org
