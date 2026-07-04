@@ -45,6 +45,8 @@
 #include "core_binds.h"
 #include <stdarg.h>
 
+#include <openssl/crypto.h>
+
 static char	OBUF[SGRAB - 110] = "";
 
 void send_uplink(const char *msg, size_t len)
@@ -117,6 +119,7 @@ void botnet_send_cmd_broad(int idx, const char *fbot,
   if (tands > 0) {
     size_t len = simple_snprintf(OBUF, sizeof OBUF, "rc * %s %s %i %s\n", fbot, fhnd, fromidx, cmd);
     send_tand_but(idx, OBUF, len);
+    OPENSSL_cleanse(OBUF, sizeof(OBUF));
   }
   if (idx < 0) {
     char tmp[24] = "";

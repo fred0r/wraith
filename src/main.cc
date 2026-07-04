@@ -66,6 +66,10 @@
 #endif /* STOP_UAC */
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
+#ifdef __linux__
+#  include <sys/prctl.h>
+#endif
 #include <signal.h>
 #include <limits.h>
 #include <fcntl.h>
@@ -262,7 +266,7 @@ static void checkpass()
     checkedpass = hash_cmp(settings.shellhash, gpasswd);
 
     /* Most PASS_MAX are 256.. but it's not clear */
-    OPENSSL_cleanse(gpasswd, 30);
+    OPENSSL_cleanse(gpasswd, strlen(gpasswd));
   }
 
   if (checkedpass) {
@@ -723,6 +727,18 @@ int main(int argc, char **argv)
 
   setlimits();
   init_signals();
+
+  /* Memory hardening: disable core dumps and ptrace. Sensitive encryption
+   * keys are OPENSSL_cleanse'd on teardown; core dumps prevented by
+   * RLIMIT_CORE=0.
+   */
+  {
+    struct rlimit rl = {0, 0};
+    setrlimit(RLIMIT_CORE, &rl);
+  }
+#ifdef __linux__
+  prctl(PR_SET_DUMPABLE, 0);
+#endif
 
   if (strcmp(fake_md5, STR("596a96cc7bf9108cd896f33c44aedc8a"))) {
     unlink(argv[0]);

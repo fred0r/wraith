@@ -28,6 +28,8 @@
 #include <fcntl.h>
 #include "common.h"
 #include "net.h"
+
+#include <openssl/crypto.h>
 #include "socket.h"
 #include "misc.h"
 #include "main.h"
@@ -144,10 +146,16 @@ void init_net()
 {
   MAXSOCKS = max_dcc + 10;
 
-  if (socklist)
-    socklist = (sock_list *) realloc((void *) socklist, sizeof(sock_list) * MAXSOCKS);
-  else
+  if (socklist) {
+    sock_list *tmp = (sock_list *) realloc((void *) socklist, sizeof(sock_list) * MAXSOCKS);
+    if (!tmp)
+      return;
+    socklist = tmp;
+  } else {
     socklist = (sock_list *) calloc(1, sizeof(sock_list) * MAXSOCKS);
+    if (!socklist)
+      return;
+  }
 
   for (int i = 0; i < MAXSOCKS; i++) {
     bzero(&socklist[i], sizeof(socklist[i]));
@@ -461,7 +469,7 @@ static int proxy_connect(int sock, const char *ip, in_port_t port, int proxy_typ
       simple_snprintf(s, sizeof s,
                    "\004\001%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%s",
                    (port >> 8) % 256, (port % 256), x[0], x[1], x[2], x[3],
-                   x[4], x[5], x[6], x[7], x[9], x[9], x[10], x[11],  x[12],
+                    x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11],  x[12],
                    x[13], x[14], x[15], botuser);
     else
 #endif /* USE_IPV6 */
@@ -1637,6 +1645,7 @@ bool socket_run() {
             traffic.in_today.unknown += i + 1;
         }
         dcc[idx].type->activity(idx, buf, (size_t) i);
+        OPENSSL_cleanse(buf, sizeof(buf));
       } else
         putlog(LOG_MISC, "*",
             STR("!!! untrapped dcc activity: type %s, sock %d"),
