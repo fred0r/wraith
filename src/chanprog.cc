@@ -873,9 +873,15 @@ void privmsg(const bd::String& target, bd::String msg, int idx) {
     chan = find_common_opped_chan(target);
   bool cleartextPrefix = (msg(0, 3) == "+p ");
 
-  // Encrypt with FiSH?
-  if (!cleartextPrefix && FishKeys.contains(target) && FishKeys[target]->sharedKey.length()) {
-    msg = "+OK " + egg_bf_encrypt(msg, FishKeys[target]->sharedKey);
+  // Encrypt with FiSH? (only chathubs use FiSH)
+  // Skip CTCP messages (\001) — they must remain plaintext for client parsing
+  if (ischanhub() && !cleartextPrefix && msg[0] != '\001' &&
+      FishKeys.contains(target) && FishKeys[target]->sharedKey.length()) {
+    fish_data_t* fishData = FishKeys[target];
+    if (fishData->use_cbc)
+      msg = "+OK *" + fish_bf_cbc_encrypt(fishData->sharedKey, msg);
+    else
+      msg = "+OK " + egg_bf_encrypt(msg, fishData->sharedKey);
   }
 
   if (cleartextPrefix) {
@@ -895,8 +901,15 @@ void notice(const bd::String& target, bd::String msg, int idx) {
     chan = find_common_opped_chan(target);
   bool cleartextPrefix = (msg(0, 3) == "+p ");
 
-  if (!cleartextPrefix && FishKeys.contains(target) && FishKeys[target]->sharedKey.length()) {
-    msg = "+OK " + egg_bf_encrypt(msg, FishKeys[target]->sharedKey);
+  // Encrypt with FiSH? (only chathubs use FiSH)
+  // Skip CTCP messages (\001) — they must remain plaintext for client parsing
+  if (ischanhub() && !cleartextPrefix && msg[0] != '\001' &&
+      FishKeys.contains(target) && FishKeys[target]->sharedKey.length()) {
+    fish_data_t* fishData = FishKeys[target];
+    if (fishData->use_cbc)
+      msg = "+OK *" + fish_bf_cbc_encrypt(fishData->sharedKey, msg);
+    else
+      msg = "+OK " + egg_bf_encrypt(msg, fishData->sharedKey);
   }
 
   if (cleartextPrefix) {
@@ -911,15 +924,21 @@ void notice(const bd::String& target, bd::String msg, int idx) {
 
 
 void keyx(const bd::String &target, const char *reason) {
+  if (!ischanhub()) {
+    putlog(LOG_MSGS, "*", "[FiSH] Not a chathub (+c), skipping DH1080 with %s", target.c_str());
+    return;
+  }
+
   bd::String myPublicKeyB64, myPrivateKey, sharedKey;
 
   DH1080_gen(myPrivateKey, myPublicKeyB64);
 
   fish_data_t* fishData = FishKeys.contains(target) ? FishKeys[target] : new fish_data_t;
   fishData->sharedKey.clear();
+  fishData->use_cbc = true;
   putlog(LOG_MSGS, "*", "[FiSH] Initiating DH1080 key-exchange with %s - "
       "sending my public key (%s)", target.c_str(), reason);
-  notice(target, "DH1080_INIT " + myPublicKeyB64, DP_HELP);
+  notice(target, "DH1080_INIT " + myPublicKeyB64 + " CBC", DP_HELP);
   fishData->myPublicKeyB64 = myPublicKeyB64;
   fishData->myPrivateKey = myPrivateKey;
   fishData->key_created_at = now;
@@ -937,6 +956,7 @@ void set_fish_key(const char *target, const bd::String key)
     }
   } else { //set key
     fishData = new fish_data_t;
+    fishData->use_cbc = true;
 
     if (key == "rand") {
       // Set a RANDOM key

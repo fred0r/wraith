@@ -1997,7 +1997,7 @@ static void cmd_encrypt(int idx, char *par)
 static void cmd_encrypt_fish(int idx, char *par)
 {
   if (!par[0]) {
-    dprintf(idx, "Usage: encrypt_fish <key> <string>\n");
+    dprintf(idx, "Usage: encrypt_fish <key> <string> [cbc]\n");
     return;
   }
 
@@ -2006,20 +2006,39 @@ static void cmd_encrypt_fish(int idx, char *par)
   char *key = newsplit(&par);
 
   if (!par[0]) {
-    dprintf(idx, "Usage: encrypt_fish <key> <string>\n");
+    dprintf(idx, "Usage: encrypt_fish <key> <string> [cbc]\n");
     return;
   }
 
-  const char salt2[] = SALT2;
+  bool use_cbc = false;
+  bd::String data(par);
+  // Check for trailing "cbc"
+  size_t len = data.length();
+  if (len >= 4 && data(len - 4, 4) == " cbc") {
+    use_cbc = true;
+    data.resize(len - 4);
+  } else if (len >= 3 && data(len - 3, 3) == "cbc" && (len == 3 || data[len - 4] == ' ')) {
+    use_cbc = true;
+    data.resize(len - 3);
+  }
 
-  bd::String bf_crypt = egg_bf_encrypt(bd::String(par), bd::String(key ? key : salt2));
-  dprintf(idx, "encrypt_fish(%s) = %s\n", par, bf_crypt.c_str());
+  const char salt2[] = SALT2;
+  bd::String bf_key(key ? key : salt2);
+  bd::String bf_crypt;
+
+  if (use_cbc) {
+    bf_crypt = fish_bf_cbc_encrypt(bf_key, data);
+    dprintf(idx, "encrypt_fish(%s) = %s [CBC]\n", data.c_str(), bf_crypt.c_str());
+  } else {
+    bf_crypt = egg_bf_encrypt(data, bf_key);
+    dprintf(idx, "encrypt_fish(%s) = %s [ECB]\n", data.c_str(), bf_crypt.c_str());
+  }
 }
 
 static void cmd_decrypt_fish(int idx, char *par)
 {
   if (!par[0]) {
-    dprintf(idx, "Usage: decrypt_fish <key> <string>\n");
+    dprintf(idx, "Usage: decrypt_fish <key> <string> [cbc]\n");
     return;
   }
 
@@ -2028,14 +2047,39 @@ static void cmd_decrypt_fish(int idx, char *par)
   char *key = newsplit(&par);
 
   if (!par[0]) {
-    dprintf(idx, "Usage: decrypt_fish <key> <string>\n");
+    dprintf(idx, "Usage: decrypt_fish <key> <string> [cbc]\n");
     return;
   }
 
-  const char salt2[] = SALT2;
+  bool use_cbc = false;
+  bd::String data(par);
+  // Check for trailing "cbc"
+  size_t len = data.length();
+  if (len >= 4 && data(len - 4, 4) == " cbc") {
+    use_cbc = true;
+    data.resize(len - 4);
+  } else if (len >= 3 && data(len - 3, 3) == "cbc" && (len == 3 || data[len - 4] == ' ')) {
+    use_cbc = true;
+    data.resize(len - 3);
+  }
 
-  bd::String bf_decrypt = egg_bf_decrypt(bd::String(par), bd::String(key ? key : salt2));
-  dprintf(idx, "decrypt_fish(%s) = %s\n", par, bf_decrypt.c_str());
+  const char salt2[] = SALT2;
+  bd::String bf_key(key ? key : salt2);
+  bd::String bf_decrypt;
+
+  if (use_cbc) {
+    // Strip +OK * prefix if present
+    if (data(0, 5) == "+OK *") {
+      bd::String ciphertext(data.cbegin() + 5, data.length() - 5);
+      bf_decrypt = fish_bf_cbc_decrypt(bf_key, ciphertext);
+    } else {
+      bf_decrypt = fish_bf_cbc_decrypt(bf_key, data);
+    }
+    dprintf(idx, "decrypt_fish(%s) = %s [CBC]\n", data.c_str(), bf_decrypt.c_str());
+  } else {
+    bf_decrypt = egg_bf_decrypt(data, bf_key);
+    dprintf(idx, "decrypt_fish(%s) = %s [ECB]\n", data.c_str(), bf_decrypt.c_str());
+  }
 }
 
 static void cmd_decrypt(int idx, char *par)

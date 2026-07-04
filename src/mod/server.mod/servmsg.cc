@@ -157,18 +157,23 @@ static int check_bind_raw(char *from, char *code, char *msg)
 
   myfrom = p1 = strdup(from);
 
-  // Decrypt FiSH before processing
-  if (!strcmp(code, "PRIVMSG") || !strcmp(code, "NOTICE")) {
+  // Decrypt FiSH before processing (only chathubs use FiSH)
+  if (ischanhub() && (!strcmp(code, "PRIVMSG") || !strcmp(code, "NOTICE"))) {
     char* colon = strchr(msg, ':'), *first_word = strchr(msg, ' ');
-    bd::String target(msg, first_word - msg);
 
-    ++colon;
-    if (colon) {
-      if (!strncmp(colon, "+OK ", 4)) {
+    if (colon && first_word) {
+      bd::String target(msg, first_word - msg);
+
+      ++colon;
+      // Skip FiSH processing for CTCP messages — they are plaintext protocol
+      if (colon[0] == '\001')
+        ; /* CTCP, do nothing */
+      else if (!strncmp(colon, "+OK ", 4)) {
         bool isValidCipherText;
         char *p = strchr(from, '!');
         const bool target_is_chan = strchr(CHANMETA, target[0]);
         bd::String ciphertext(colon), sharedKey, nick(from, p - from), key_target;
+        const bool isCBC = (colon[4] == '*');
 
         // If this is a channel msg, decrypt with the channel key
         if (target_is_chan) {
@@ -191,7 +196,9 @@ static int check_bind_raw(char *from, char *code, char *msg)
 
         if (sharedKey.length()) {
           // Decrypt the message before passing along to the binds
-          const bd::String decrypted(egg_bf_decrypt(ciphertext, sharedKey));
+          const bd::String decrypted(isCBC
+              ? fish_bf_cbc_decrypt(sharedKey, bd::String(colon + 5))
+              : egg_bf_decrypt(ciphertext, sharedKey));
           // Does the decrypted text make sense? If not, the key is probably invalid, reset it.
           isValidCipherText = true;
           for (size_t i = 0; i < decrypted.length(); ++i) {
@@ -212,8 +219,15 @@ static int check_bind_raw(char *from, char *code, char *msg)
         } else {
           isValidCipherText = false;
         }
-        if (fish_auto_keyx && !isValidCipherText && !target_is_chan) {
-          keyx(nick, "Invalid/Unknown key");
+        if (!isValidCipherText && !target_is_chan) {
+          struct userrec *u = get_user_by_host(from);
+          if (u) {
+            struct flag_record fr = { FR_GLOBAL | FR_CHAN | FR_ANYWH, 0, 0, 0 };
+            get_user_flagrec(u, &fr, NULL);
+            if (glob_op(fr) || chan_op(fr) || glob_voice(fr) || chan_voice(fr)) {
+              keyx(nick, "Invalid/Unknown key");
+            }
+          }
         }
       }
     }
@@ -389,15 +403,15 @@ got005(char *from, char *msg)
     }
     else if (!strcasecmp(tmp, "NETWORK")) {
       strlcpy(curnetwork, p, 120);
-      if (!strcasecmp(tmp, "IRCnet")) {
+      if (!strcasecmp(curnetwork, "IRCnet")) {
         simple_snprintf(stackablecmds, sizeof(stackablecmds), "INVITE AWAY VERSION NICK");
         simple_snprintf(stackable2cmds, sizeof(stackable2cmds), "USERHOST ISON");
         use_fastdeq = 3;
-      } else if (!strcasecmp(tmp, "DALnet")) {
+      } else if (!strcasecmp(curnetwork, "DALnet")) {
         simple_snprintf(stackablecmds, sizeof(stackablecmds), "PRIVMSG NOTICE PART WHOIS WHOWAS USERHOST ISON WATCH DCCALLOW");
         simple_snprintf(stackable2cmds, sizeof(stackable2cmds), "USERHOST ISON WATCH");
         use_fastdeq = 2;
-      } else if (!strcasecmp(tmp, "UnderNet")) {
+      } else if (!strcasecmp(curnetwork, "UnderNet")) {
         simple_snprintf(stackablecmds, sizeof(stackablecmds), "PRIVMSG NOTICE TOPIC PART WHOIS USERHOST USERIP ISON");
         simple_snprintf(stackable2cmds, sizeof(stackable2cmds), "USERHOST USERIP ISON");
         use_fastdeq = 2;
@@ -684,7 +698,8 @@ static int gotmsg(char *from, char *msg)
       ctcp = ctcpbuf;
 
       /* remove the ctcp in msg */
-      memmove(p1 - 1, p + 1, strlen(p + 1) + 1);
+      if (p1 > msg)
+        memmove(p1 - 1, p + 1, strlen(p + 1) + 1);
 
       if (!ignoring)
         detect_flood(nick, uhost, from, strncmp(ctcp, "ACTION ", 7) ? FLOOD_CTCP : FLOOD_PRIVMSG);
@@ -820,7 +835,12 @@ static int gotmsg(char *from, char *msg)
 }
 
 // Adapated from ZNC
-void handle_DH1080_init(const char* nick, const char* uhost, const char* from, struct userrec* u, const bd::String theirPublicKeyB64) {
+void handle_DH1080_init(const char* nick, const char* uhost, const char* from, struct userrec* u, const bd::String theirPublicKeyB64, const bool peer_cbc) {
+  if (!ischanhub()) {
+    putlog(LOG_MSGS, "*", "[FiSH] Received DH1080_INIT from (%s!%s) but I'm not a chathub (+c), ignoring", nick, uhost);
+    return;
+  }
+
   bd::String myPublicKeyB64, myPrivateKey, sharedKey;
 
   DH1080_gen(myPrivateKey, myPublicKeyB64);
@@ -832,7 +852,9 @@ void handle_DH1080_init(const char* nick, const char* uhost, const char* from, s
   putlog(LOG_MSGS, "*", "[FiSH] Received DH1080 public key from (%s!%s) - sending mine", nick, uhost);
   fish_data_t* fishData = FishKeys.contains(nick) ? FishKeys[nick] : new fish_data_t;
   fishData->sharedKey.clear();
-  notice(nick, "DH1080_FINISH " + myPublicKeyB64, DP_HELP);
+  fishData->use_cbc = peer_cbc;
+  bd::String finishSuffix = peer_cbc ? bd::String(" CBC") : bd::String();
+  notice(nick, "DH1080_FINISH " + myPublicKeyB64 + finishSuffix, DP_HELP);
   fishData->myPublicKeyB64 = myPublicKeyB64;
   fishData->myPrivateKey = myPrivateKey;
   fishData->sharedKey = sharedKey;
@@ -842,7 +864,12 @@ void handle_DH1080_init(const char* nick, const char* uhost, const char* from, s
   return;
 }
 
-void handle_DH1080_finish(const char* nick, const char* uhost, const char* from, struct userrec* u, const bd::String theirPublicKeyB64) {
+void handle_DH1080_finish(const char* nick, const char* uhost, const char* from, struct userrec* u, const bd::String theirPublicKeyB64, const bool peer_cbc) {
+  if (!ischanhub()) {
+    putlog(LOG_MSGS, "*", "[FiSH] Received DH1080_FINISH from (%s!%s) but I'm not a chathub (+c), ignoring", nick, uhost);
+    return;
+  }
+
   if (!FishKeys.contains(nick)) {
     putlog(LOG_MSGS, "*", "[FiSH] Unexpected DH1080_FINISH from (%s!%s) - ignoring", nick, uhost);
     return;
@@ -858,6 +885,7 @@ void handle_DH1080_finish(const char* nick, const char* uhost, const char* from,
 
   putlog(LOG_MSGS, "*", "[FiSH] Key successfully set for (%s!%s)", nick, uhost);
   fishData->sharedKey = sharedKey;
+  fishData->use_cbc = peer_cbc;
   sdprintf("Set key for %s: %s", nick, sharedKey.c_str());
   return;
 }
@@ -900,7 +928,8 @@ static int gotnotice(char *from, char *msg)
       ctcp = ctcpbuf;
 
       /* remove the ctcp in msg */
-      memmove(p1 - 1, p + 1, strlen(p + 1) + 1);
+      if (p1 > ctcpmsg)
+        memmove(p1 - 1, p + 1, strlen(p + 1) + 1);
 
       if (!ignoring)
 	detect_flood(nick, uhost, from, FLOOD_CTCP);
@@ -947,10 +976,12 @@ static int gotnotice(char *from, char *msg)
 
         if (which == "DH1080_INIT") {
           bd::String theirPublicKeyB64(newsplit(smsg));
-          handle_DH1080_init(nick, uhost, from, u, theirPublicKeyB64);
+          const bool peer_cbc = smsg.length() > 0 && !strcmp(smsg.c_str(), "CBC");
+          handle_DH1080_init(nick, uhost, from, u, theirPublicKeyB64, peer_cbc);
         } else if (which == "DH1080_FINISH") {
           bd::String theirPublicKeyB64(newsplit(smsg));
-          handle_DH1080_finish(nick, uhost, from, u, theirPublicKeyB64);
+          const bool peer_cbc = smsg.length() > 0 && !strcmp(smsg.c_str(), "CBC");
+          handle_DH1080_finish(nick, uhost, from, u, theirPublicKeyB64, peer_cbc);
         } else {
           putlog(LOG_MSGS, "*", "-%s (%s)- %s", nick, uhost, msg);
         }
@@ -1030,6 +1061,7 @@ static int gotpong(char *from, char *msg)
     /* IRCnet lagmeter support by drummer */
     server_lag = now - lastpingtime;
   }
+  waiting_for_awake = 0;
   return 0;
 }
 

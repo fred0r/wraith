@@ -13,6 +13,8 @@ namespace bd {
 
 bd::String egg_bf_encrypt(bd::String in, const bd::String& key);
 bd::String egg_bf_decrypt(bd::String in, const bd::String& key);
+bd::String fish_bf_cbc_encrypt(const bd::String& key, const bd::String& plaintext);
+bd::String fish_bf_cbc_decrypt(const bd::String& key, const bd::String& b64ciphertext);
 #ifdef not_needed
 unsigned char *bf_encrypt_ecb_binary(const char *, unsigned char *, size_t *);
 unsigned char *bf_decrypt_ecb_binary(const char *, unsigned char *, size_t *);

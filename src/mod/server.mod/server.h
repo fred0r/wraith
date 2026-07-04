@@ -50,6 +50,7 @@ typedef struct {
   bd::String myPrivateKey;
   bd::String myPublicKeyB64;
   time_t key_created_at;
+  bool use_cbc;
 } fish_data_t;
 
 extern bind_table_t	*BT_ctcp, *BT_ctcr;

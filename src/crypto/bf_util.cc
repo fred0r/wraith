@@ -5,6 +5,7 @@
 #include "src/libcrypto.h"
 #include "src/compat/compat.h"
 #include <bdlib/src/String.h>
+#include <bdlib/src/base64.h>
 
 #define CRYPT_BLOCKSIZE BF_BLOCK
 
@@ -137,6 +138,77 @@ bd::String egg_bf_decrypt(bd::String in, const bd::String& key)
       }
     }
   }
+
+  return out;
+}
+
+bd::String fish_bf_cbc_encrypt(const bd::String& key, const bd::String& plaintext)
+{
+  if (!key.length()) return plaintext;
+
+  // Generate random 8-byte IV
+  bd::String iv;
+  iv.resize(BF_BLOCK);
+  if (RAND_bytes(reinterpret_cast<unsigned char*>(iv.begin()), BF_BLOCK) != 1)
+    return bd::String();
+
+  // Pad plaintext to multiple of BF_BLOCK bytes
+  bd::String data(plaintext);
+  size_t datalen = data.length();
+  if (datalen % BF_BLOCK != 0)
+    datalen += BF_BLOCK - (datalen % BF_BLOCK);
+  data.resize(datalen, 0);
+
+  // Encrypt (copy IV since BF_cbc_encrypt modifies it in-place)
+  bd::String out;
+  out.resize(datalen);
+  bd::String iv_copy(iv);
+  BF_set_key(&bf_e_key, key.length(), reinterpret_cast<const unsigned char*>(key.cbegin()));
+  BF_cbc_encrypt(
+      reinterpret_cast<const unsigned char*>(data.cbegin()),
+      reinterpret_cast<unsigned char*>(out.begin()),
+      static_cast<long>(datalen), &bf_e_key,
+      reinterpret_cast<unsigned char*>(iv_copy.begin()),
+      BF_ENCRYPT
+  );
+  OPENSSL_cleanse(&bf_e_key, sizeof(bf_e_key));
+
+  return bd::base64Encode(iv + out);
+}
+
+bd::String fish_bf_cbc_decrypt(const bd::String& key, const bd::String& b64ciphertext)
+{
+  if (!key.length()) return b64ciphertext;
+
+  bd::String decoded(bd::base64Decode(b64ciphertext));
+
+  // Need at least IV (BF_BLOCK bytes) + 1 block
+  if (decoded.length() < static_cast<size_t>(BF_BLOCK * 2)) return bd::String();
+
+  // Extract IV from the first BF_BLOCK bytes
+  bd::String iv;
+  iv.resize(BF_BLOCK);
+  memcpy(iv.begin(), decoded.cbegin(), BF_BLOCK);
+
+  size_t cipherlen = decoded.length() - BF_BLOCK;
+  cipherlen -= cipherlen % BF_BLOCK;
+  if (cipherlen == 0) return bd::String();
+
+  bd::String out;
+  out.resize(cipherlen);
+  BF_set_key(&bf_d_key, key.length(), reinterpret_cast<const unsigned char*>(key.cbegin()));
+  BF_cbc_encrypt(
+      reinterpret_cast<const unsigned char*>(decoded.cbegin()) + BF_BLOCK,
+      reinterpret_cast<unsigned char*>(out.begin()),
+      static_cast<long>(cipherlen), &bf_d_key,
+      reinterpret_cast<unsigned char*>(iv.begin()),
+      BF_DECRYPT
+  );
+  OPENSSL_cleanse(&bf_d_key, sizeof(bf_d_key));
+
+  // Trim trailing NUL padding bytes
+  while (out.length() > 0 && out[out.length() - 1] == '\0')
+    --out;
 
   return out;
 }

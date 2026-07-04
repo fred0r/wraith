@@ -108,6 +108,11 @@ static void cmd_jump(int idx, char *par)
 static void cmd_keyx(int idx, char *par) {
   putlog(LOG_CMDS, "*", "#%s# keyx %s", dcc[idx].nick, par);
 
+  if (!ischanhub()) {
+    dprintf(idx, "I'm not a chathub (+c).\n");
+    return;
+  }
+
   if (!par[0]) {
     dprintf(idx, "Usage: keyx <nick>\n");
     return;
@@ -130,6 +135,11 @@ static void cmd_keyx(int idx, char *par) {
 
 static void cmd_setkey(int idx, char *par) {
   putlog(LOG_CMDS, "*", "#%s# setkey %s", dcc[idx].nick, par);
+
+  if (!ischanhub()) {
+    dprintf(idx, "I'm not a chathub (+c).\n");
+    return;
+  }
 
   const bool target_is_chan = par[0] && strchr(CHANMETA, par[0]);
 
