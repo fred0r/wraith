@@ -367,9 +367,27 @@ static void start_sending_binary(int idx, bool streamable)
              i == DCCSEND_BADFN  ? "BAD FILE" :
              i == DCCSEND_FEMPTY ? "EMPTY FILE" : "UNKNOWN REASON!");
       dcc[idx].status &= ~(STAT_SENDINGU);
+      dcc[idx].status |= STAT_UPDATED;
+      {
+        tand_t *b = findbot(dcc[idx].nick);
+        if (b) {
+          b->buildts = buildts;
+          strlcpy(b->version, egg_version, sizeof(b->version));
+          strlcpy(b->commit, commit, sizeof(b->commit));
+        }
+      }
       bupdating = 0;
     } else {
       dcc[idx].status |= STAT_SENDINGU;
+      dcc[idx].status |= STAT_UPDATED;
+      {
+        tand_t *b = findbot(dcc[idx].nick);
+        if (b) {
+          b->buildts = buildts;
+          strlcpy(b->version, egg_version, sizeof(b->version));
+          strlcpy(b->commit, commit, sizeof(b->commit));
+        }
+      }
       strlcpy(dcc[j].host, dcc[idx].nick, sizeof(dcc[j].host));		/* Store bot's nick */
       dprintf(idx, "sb us %lu %d %lu\n", iptolong(getmyip()), dcc[j].port, dcc[j].u.xfer->length);
     }

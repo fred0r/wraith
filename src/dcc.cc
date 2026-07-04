@@ -242,7 +242,7 @@ greet_new_bot(int idx)
     dcc[idx].status |= STAT_LEAF;
   dcc[idx].status |= STAT_LINKING;
 
-  dprintf(idx, "v 1001500 9 Wraith %s %d %d %li %s %s\n", egg_version,
+  dprintf(idx, "v 1005000 9 Wraith %s %d %d %li %s %s\n", egg_version,
       conf.bot->u->fflags, conf.bot->localhub, (long)buildts, commit,
       egg_version);
 
@@ -360,7 +360,7 @@ bot_version(int idx, char *par)
   touch_laston(dcc[idx].user, "linked", now);
   dcc[idx].type = &DCC_BOT;
   addbot(dcc[idx].nick, dcc[idx].nick, conf.bot->nick, '-', vlocalhub, vbuildts, vcommit, vversion, fflags);
-  simple_snprintf(x, sizeof x, "v 1001500");
+  simple_snprintf(x, sizeof x, "v 1005000");
   bot_share(idx, x);
   dprintf(idx, "el\n");
 }
