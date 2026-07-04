@@ -303,10 +303,10 @@ static void show_help()
 
   printf(STR("%s\n\n"), version);
   printf(STR("%s [options] [botnick[.conf]]\n"), binname);
-  printf(STR("Not supplying any options will make all bots in the binary spawn.\n"));
-  printf(STR("\n"));
-  printf(STR("- http://wraith.botpack.net -\n"));
-  printf(STR("\n"));
+  printf("%s", STR("Not supplying any options will make all bots in the binary spawn.\n"));
+  printf("%s", STR("\n"));
+  printf("%s", STR("- http://wraith.botpack.net -\n"));
+  printf("%s", STR("\n"));
   printf(format, STR("Option"), STR("Description"));
   printf(format, STR("------"), STR("-----------"));
   printf(format, STR("[-B] <botnick>"), STR("Starts the specified bot [deprecated]"));
@@ -407,7 +407,7 @@ static void dtx_arg(int& argc, char *argv[])
           putlog(LOG_MISC, "*", STR("Error #%d: %s"), atoi(p), werr_tostr(atoi(p)));
         } else {
           int n;
-          putlog(LOG_MISC, "*", STR("Listing all errors"));
+          putlog(LOG_MISC, "*", "%s", STR("Listing all errors"));
           for (n = 1; n < ERR_MAX; n++)
           putlog(LOG_MISC, "*", STR("Error #%d: %s"), n, werr_tostr(n));
         }
@@ -439,7 +439,7 @@ static void dtx_arg(int& argc, char *argv[])
         strftime(date, sizeof date, "%c %Z", gmtime(&buildts));
 	printf(STR("%s\nBuild Date: %s (%s%li%s)\n"), version, date, BOLD(-1), (long)buildts, BOLD_END(-1));
         printf(STR("BuildOS: %s%s%s BuildArch: %s%s%s\n"), BOLD(-1), BUILD_OS, BOLD_END(-1), BOLD(-1), BUILD_ARCH, BOLD_END(-1));
-        printf(STR("- http://wraith.botpack.net -\n"));
+        printf("%s", STR("- http://wraith.botpack.net -\n"));
 #ifdef DEBUG
 	printf(STR("pack: %zu conf: %zu settings_t: %zu prefix: %zu pad: %zu/%zu needed padding: %zu/%zu\n"),
             SIZE_PACK,
@@ -906,7 +906,7 @@ int main(int argc, char **argv)
     setup_HQ(n);
 
     setsock(STDOUT, 0);          /* Entry in net table */
-    dprintf(n, STR("\n### ENTERING DCC CHAT SIMULATION ###\n\n"));
+    dprintf(n, "%s", STR("\n### ENTERING DCC CHAT SIMULATION ###\n\n"));
     dcc_chatter(n);
   }
 
@@ -930,7 +930,7 @@ int main(int argc, char **argv)
       irc_init();
   }
 
-  debug0(STR("main: entering loop"));
+  putlog(LOG_DEBUG, "*", "%s", STR("main: entering loop"));
 
   while (1) {
 

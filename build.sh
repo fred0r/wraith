@@ -18,7 +18,7 @@ rm -f ts > /dev/null 2>&1
 
 #Display banner
 clear
-head -n 8 README
+head -n 8 misc/banner.txt
 
 echo -e "Version:   ${ver}\nBuild:     ${builddate}"
 echo ""
@@ -29,7 +29,7 @@ usage()
     echo
     echo "    The options are as follows:"
     echo "    -b        Use bzip2 instead of gzip when packaging."
-    echo "    -c        Cleans up old binaries/files before compile."
+    echo "    -c        Removes old tarballs and versioned binaries before compile."
     echo "    -C        Preforms a distclean before making."
     echo "    -d        Builds a debug package."
     echo "    -n        Do not package the binaries."
@@ -125,7 +125,7 @@ if [ $compile = "1" ]; then
 
  if [ $clean = "1" ]; then
   echo "[*] Cleaning up old binaries/files..."
-  make clean > /dev/null
+  rm -f ${tb}.* *.tar.*
  fi
 fi
 
@@ -133,19 +133,22 @@ _build()
 {
  if [ $compile = "1" ]; then
   echo "[*] Building ${dmake}${tb}..."
-  make ${dmake}${tb}
+  if [ $debug = "1" ]; then
+    make debug
+  else
+    make dynamic
+  fi
   if ! test -f ${tb}; then
     echo "[!] ${dmake}${tb} build failed"
     exit 1
   fi
  fi
- if [ $nopkg = "0" -o $pkg = "1" ]; then
+ if [ $compile = "1" -o $pkg = "1" ]; then
   echo "[*] Hashing and initializing settings in binary"
+   rm -f ${tb}.$os-$ver${d}
    cp ${tb} ${tb}.$os-$ver${d} > /dev/null 2>&1
   ./${tb}.$os-$ver${d} -q ${pack}
   rm=1
- elif [ $nopkg = "0" ]; then
-   mv ${tb} ${tb}.$os-$ver${d} > /dev/null 2>&1
  fi
 }
 
@@ -169,4 +172,6 @@ if [ $nopkg = "0" -o $pkg = "1" ]; then
     rm -f *$os-$ver${d}
   fi
   echo "Binaries are now in '${PACKNAME}.$os-$ver${d}.tar.${ext}'."
+elif [ $nopkg = "1" ]; then
+  echo "Binary is now at 'wraith.$os-$ver${d}'."
 fi

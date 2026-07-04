@@ -92,7 +92,7 @@ int load_libtcl() {
   }
 
   if (load_symbols(libtcl_handle)) {
-    fprintf(stderr, STR("\nMissing symbols for libtcl (likely too old)\n"));
+    fprintf(stderr, "%s", STR("\nMissing symbols for libtcl (likely too old)\n"));
     return(1);
   }
 

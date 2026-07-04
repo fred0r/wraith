@@ -9,6 +9,10 @@
 /build/config.status
 /build/stamp.*
 /build/autotools/src
+/build/autotools/config.guess
+/build/autotools/config.sub
+/build/autotools/depcomp
+/build/autotools/install-sh
 /*.tgz
 /leaf
 /hub

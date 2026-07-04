@@ -672,9 +672,9 @@ static void cmd_mmode(int idx, char *par)
   }
 
   if (mode[0] == '+' && mode[1] == 'o' && !channel_fastop(chan) && !cookies_disabled) {
-    dprintf(idx, STR("Error: This channel is currently set -fastop.\n"));
-    dprintf(idx, STR("Mass opping would result in missing op cookies.\n"));
-    dprintf(idx, STR("Please chanset the channel +fastop first.\n"));
+    dprintf(idx, "%s", STR("Error: This channel is currently set -fastop.\n"));
+    dprintf(idx, "%s", STR("Mass opping would result in missing op cookies.\n"));
+    dprintf(idx, "%s", STR("Please chanset the channel +fastop first.\n"));
     return;
   }
 
@@ -1417,7 +1417,7 @@ static void cmd_authed(int idx, char *par)
 {
   putlog(LOG_CMDS, "*", STR("#%s# authed"), dcc[idx].nick);
 
-  dprintf(idx, STR("Authed:\n"));
+  dprintf(idx, "%s", STR("Authed:\n"));
   Auth::TellAuthed(idx);
 }
 

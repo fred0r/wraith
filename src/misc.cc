@@ -413,12 +413,12 @@ void show_banner(int idx)
   if (dcc[idx].status & STAT_BANNER)
     dumplots(-dcc[idx].sock, "", wbanner()); 
   dprintf(idx, " \n");
-  dprintf(-dcc[idx].sock, STR(" -------------------------------------------------------- \n"));
-  dprintf(-dcc[idx].sock, STR("|             - http://wraith.botpack.net/ -             |\n"));
-  dprintf(-dcc[idx].sock, STR("|  Get Shell/Irc/Web hosting @ http://www.xzibition.com  |\n"));
-  dprintf(-dcc[idx].sock, STR("|     Help support wraith development by signing up.     |\n"));
-  dprintf(-dcc[idx].sock, STR("|  Use coupon code 'wraith' for 30%% off lifetime         |\n"));
-  dprintf(-dcc[idx].sock, STR(" -------------------------------------------------------- \n"));
+  dprintf(-dcc[idx].sock, "%s", STR(" -------------------------------------------------------- \n"));
+  dprintf(-dcc[idx].sock, "%s", STR("|             - http://wraith.botpack.net/ -             |\n"));
+  dprintf(-dcc[idx].sock, "%s", STR("|  Get Shell/Irc/Web hosting @ http://www.xzibition.com  |\n"));
+  dprintf(-dcc[idx].sock, "%s", STR("|     Help support wraith development by signing up.     |\n"));
+  dprintf(-dcc[idx].sock, "%s", STR("|  Use coupon code 'wraith' for 30%% off lifetime         |\n"));
+  dprintf(-dcc[idx].sock, "%s", STR(" -------------------------------------------------------- \n"));
   dprintf(idx, " \n");
 
 }
@@ -850,9 +850,9 @@ restart(int idx)
   if (floodless)
     stream << bd::String::printf(STR("+server_floodless %d\n"), floodless);
   if (in_deaf)
-    stream << bd::String::printf(STR("+in_deaf\n"));
+    stream << bd::String::printf("%s", STR("+in_deaf\n"));
   if (in_callerid)
-    stream << bd::String::printf(STR("+in_callerid\n"));
+    stream << bd::String::printf("%s", STR("+in_callerid\n"));
   for (struct chanset_t *chan = chanset; chan; chan = chan->next)
     if (shouldjoin(chan) && (channel_active(chan) || channel_pending(chan)))
       stream << bd::String::printf(STR("+chan %s\n"), chan->dname);
@@ -937,7 +937,7 @@ int updatebin(int idx, char *par, int secs)
   newbin = strrchr(path, '/');
   if (!newbin) {
     free(path);
-    logidx(idx, STR("Don't know current binary name"));
+    logidx(idx, "%s", STR("Don't know current binary name"));
     return 1;
   }
   newbin++;
@@ -950,7 +950,7 @@ int updatebin(int idx, char *par, int secs)
   strcpy(newbin, par);
   if (!strcmp(path, binname)) {
     free(path);
-    logidx(idx, STR("Can't update with the current binary"));
+    logidx(idx, "%s", STR("Can't update with the current binary"));
     return 1;
   }
   if (!can_stat(path)) {
@@ -967,11 +967,11 @@ int updatebin(int idx, char *par, int secs)
   /* Check if the new binary is compatible */
   int initialized_code = check_bin_initialized(path);
   if (initialized_code == 2) {
-    logidx(idx, STR("New binary is corrupted or the wrong architecture/operating system."));
+    logidx(idx, "%s", STR("New binary is corrupted or the wrong architecture/operating system."));
     free(path);
     return 1;
   } else if (initialized_code == 1 && !check_bin_compat(path)) {
-    logidx(idx, STR("New binary must be initialized as pack structure has been changed in new version."));
+    logidx(idx, "%s", STR("New binary must be initialized as pack structure has been changed in new version."));
     free(path);
     return 1;
   }
@@ -987,7 +987,7 @@ int updatebin(int idx, char *par, int secs)
   Tempfile *conffile = new Tempfile("conf");
 
   if (writeconf(NULL, conffile->fd, CONF_ENC)) {
-    logidx(idx, STR("Failed to write temporary config file for update."));
+    logidx(idx, "%s", STR("Failed to write temporary config file for update."));
     delete conffile;
     return 1;
   }

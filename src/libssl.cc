@@ -137,12 +137,12 @@ int load_libssl() {
     }
   }
   if (!libssl_handle) {
-    fprintf(stderr, STR("Unable to find libssl\n"));
+    fprintf(stderr, "%s", STR("Unable to find libssl\n"));
     return(1);
   }
 
   if (load_symbols(libssl_handle)) {
-    fprintf(stderr, STR("\nMissing symbols for libssl (likely too old)\n"));
+    fprintf(stderr, "%s", STR("\nMissing symbols for libssl (likely too old)\n"));
     return(1);
   }
 

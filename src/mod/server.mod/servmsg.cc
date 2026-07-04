@@ -2283,7 +2283,6 @@ static void server_dns_callback(int id, void *client_data, const char *host,
   }
 
   {
-    int i = 1;
     dcc[idx].timeval = now;
     SERVER_SOCKET.timeout_val = &server_timeout;
     /* Another server may have truncated it, so use the original */

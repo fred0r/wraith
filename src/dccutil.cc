@@ -558,7 +558,7 @@ dcc_write(bd::Stream &stream, int idx)
   if (dcc[idx].sock > 0) {
     bd::String buf;
 
-    stream << bd::String::printf(STR("-dcc\n"));
+    stream << bd::String::printf("%s", STR("-dcc\n"));
     if (dcc[idx].type)
       stream << bd::String::printf(STR("type %s\n"), dcc[idx].type->name);
 //  if (user)
@@ -575,7 +575,7 @@ dcc_write(bd::Stream &stream, int idx)
       stream << bd::String::printf(STR("nick %s\n"), dcc[idx].nick);
     if (dcc[idx].host[0])
       stream << bd::String::printf(STR("host %s\n"), dcc[idx].host);
-    stream << bd::String::printf(STR("+dcc\n"));
+    stream << bd::String::printf("%s", STR("+dcc\n"));
   }
 }
 

@@ -117,7 +117,7 @@ sorthelp: sorthelp.cc $(top_builddir)/lib/bdlib/libbdlib.a
 ../$(EGGEXEC): $(OBJS) $(top_builddir)/lib/bdlib/libbdlib.a @LIBELF_BUNDLED@ $(EXPORTS)
 	@echo -e "[LD ]	\033[1m$@\033[0m"
 	$(LD) $(LDFLAGS) -o ../$(EGGEXEC) $(OBJS) $(top_builddir)/lib/bdlib/libbdlib.a \
-	    $(LIBS) @LIBELF_LIB@ -Wl,--dynamic-list=$(EXPORTS)
+	    $(LIBS) @SSL_LIBS@ @LIBELF_LIB@ -Wl,--dynamic-list=$(EXPORTS)
 	@$(STRIP) ../$(EGGEXEC)
 	@$(OBJCOPY) ../$(EGGEXEC)
 	@echo "Successful compile: $(EGGEXEC)"

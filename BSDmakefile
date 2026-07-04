@@ -6,7 +6,6 @@ TARGETS=	\
 		all \
 		debug \
 		libdefs \
-		static \
 		dynamic \
 		clean \
 		distclean \

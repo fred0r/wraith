@@ -322,37 +322,7 @@ int main() {
   fi
 ])
 
-dnl  EGG_CHECK_CCSTATIC()
-dnl
-dnl  Checks whether the compiler supports the `-static' flag.
-AC_DEFUN([EGG_CHECK_CCSTATIC],
-[
-if test "$USE_STATIC" = "yes"
-then
-  if test -n "$GXX"
-  then
-    AC_CACHE_CHECK(whether the compiler understands -static, egg_cv_var_ccstatic, [dnl
-      AC_TRY_COMPILE(,, egg_cv_var_ccstatic="yes", egg_cv_var_ccstatic="no")
-    ])
-    if ! test "$egg_cv_var_ccstatic" = "yes"
-    then
-      cat << 'EOF' >&2
-configure: error:
 
-  Your OS or C++ compiler does not support -static.
-  This compile flag is required for the botpack on this OS.
-
-EOF
-    exit 1
-  fi
-fi
-
-  STATIC="-static"
-else
-  STATIC=""
-fi
-AC_SUBST(STATIC)dnl
-])
 
 dnl EGG_PROG_HEAD_1()
 dnl
@@ -675,7 +645,7 @@ AC_TRY_COMPILE([#include <openssl/opensslv.h>],[
 CXX="$CXX $SSL_LIBS"
 AC_CHECK_LIB(crypto, AES_encrypt,
 [
-  if test "$USE_STATIC" = "yes"; then
+  if test "$USE_STATIC" = "yes" && test -f "${cf_openssl_libdir}/libcrypto.a"; then
     SSL_LIBS="$SSL_LIBS -Wl,-Bstatic -lcrypto -Wl,-Bdynamic"
   else
     SSL_LIBS="$SSL_LIBS -lcrypto"
@@ -684,6 +654,30 @@ AC_CHECK_LIB(crypto, AES_encrypt,
 [
   AC_MSG_RESULT([not found.])
   AC_MSG_ERROR([Libcrypto/openssl is required.], 1)
+]
+)
+
+dnl Check for ChaCha20-Poly1305 support
+AC_MSG_CHECKING([for ChaCha20-Poly1305 support])
+AC_TRY_COMPILE([#include <openssl/opensslv.h>],[
+#if defined(LIBRESSL_VERSION_NUMBER)
+#  if LIBRESSL_VERSION_NUMBER < 0x2090000fL
+#    error "LibreSSL too old for ChaCha20-Poly1305"
+#  endif
+#elif defined(OPENSSL_VERSION_NUMBER)
+#  if OPENSSL_VERSION_NUMBER < 0x10100000L
+#    error "OpenSSL too old for ChaCha20-Poly1305"
+#  endif
+#else
+#  error "Unknown SSL library"
+#endif
+],
+[
+    AC_MSG_RESULT([yes])
+],
+[
+    AC_MSG_RESULT([no])
+    AC_MSG_ERROR([ChaCha20-Poly1305 is required but not available in your OpenSSL/LibreSSL. Upgrade to OpenSSL 1.1.0+ or LibreSSL 2.9.0+.], 1)
 ]
 )
 

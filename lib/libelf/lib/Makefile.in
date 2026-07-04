@@ -227,7 +227,10 @@ uninstall-compat:
 	done
 
 mostlyclean:
-	$(RM) *.o *.a *.os $(SHLIB) $(SONAME) $(SHLINK)
+	$(RM) *.o *.a *.os
+	test ! -f '$(SHLIB)'  || $(RM) '$(SHLIB)'
+	test ! -f '$(SONAME)' || $(RM) '$(SONAME)'
+	test ! -f '$(SHLINK)' || $(RM) '$(SHLINK)'
 	$(RM) *~ core a.out errlist
 
 clean: mostlyclean

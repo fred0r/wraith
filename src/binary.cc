@@ -356,8 +356,8 @@ readcfg(const char *cfgfile, bool read_stdin)
       t.c_lflag &= ~(ECHO | ISIG);
       tty_changed = (tcsetattr (fileno (stdin), TCSAFLUSH | TCSASOFT, &t) == 0);
     }
-    printf(STR("// Paste in your PACKCONFIG. Reference https://github.com/wraith/wraith/wiki/PackConfig\n"));
-    printf(STR("// Press <enter> if it gets hung up. If that doesn't work hit ^D (CTRL+d)\n"));
+    printf("%s", STR("// Paste in your PACKCONFIG. Reference https://github.com/wraith/wraith/wiki/PackConfig\n"));
+    printf("%s", STR("// Press <enter> if it gets hung up. If that doesn't work hit ^D (CTRL+d)\n"));
     fflush(stdout);
   } else {
     if ((f = fopen(cfgfile, "r")) == NULL) {
@@ -490,13 +490,13 @@ readcfg(const char *cfgfile, bool read_stdin)
 
   if (error) {
     printf("\n");
-    fprintf(stderr, STR("Error: Look at your configuration again and fix any errors.\n"));
+    fprintf(stderr, "%s", STR("Error: Look at your configuration again and fix any errors.\n"));
     for (error_line = error_list; error_line; error_line = error_line->next)
         fprintf(stderr, STR("Line %d\n"), error_line->line);
     exit(1);
   }
 
-  if (!read_stdin) printf(STR(" Success\n"));
+  if (!read_stdin) printf("%s", STR(" Success\n"));
   else printf("\n");
   return 1;
 }
@@ -648,7 +648,7 @@ check_sum(const char *fname, const char *cfgfile, bool read_stdin)
 
 // tellconfig(&settings); 
     if (bin_checksum(fname, WRITE_CHECKSUM|WRITE_CONF|WRITE_PACK))
-      printf(STR("* Wrote settings to binary.\n")); 
+      printf("%s", STR("* Wrote settings to binary.\n")); 
     exit(0);
   } else {
     if (cfgfile || read_stdin)
@@ -815,7 +815,7 @@ void conf_to_bin(conf_t *in, bool move, int die)
 
 void reload_bin_data() {
   if (bin_checksum(binname, GET_CONF)) {
-    putlog(LOG_MISC, "*", STR("Rehashed config data from binary."));
+    putlog(LOG_MISC, "*", "%s", STR("Rehashed config data from binary."));
 
     conf_bot *oldbots = NULL, *oldbot = NULL;
     bool was_localhub = conf.bot->localhub ? 1 : 0;

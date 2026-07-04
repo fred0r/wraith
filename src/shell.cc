@@ -864,7 +864,7 @@ void check_crontab()
   if (!(i = crontab_exists())) {
     crontab_create(5);
     if (!(i = crontab_exists()))
-      printf(STR("* Error writing crontab entry.\n"));
+      printf("%s", STR("* Error writing crontab entry.\n"));
   }
 }
 

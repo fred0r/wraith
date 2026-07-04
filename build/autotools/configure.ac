@@ -36,6 +36,11 @@ CXX_FLAG_CHECK([CXXFLAGS], [-fcolor-diagnostics], [colordiagnostics])
 CXX_FLAG_CHECK_NO([CXXFLAGS], [-Winvalid-source-encoding], [-Wno-invalid-source-encoding], [invalid_source_encoding])
 CXX_FLAG_CHECK_NO([CXXFLAGS], [-Wnarrowing], [-Wno-narrowing], [nonarrowing])
 CXX_FLAG_CHECK_NO([CXXFLAGS], [-Wcast-function-type], [-Wno-cast-function-type], [no_cast_function_type])
+CXX_FLAG_CHECK_NO([CXXFLAGS], [-Wcast-function-type-mismatch], [-Wno-cast-function-type-mismatch], [no_cast_function_type_mismatch])
+CXX_FLAG_CHECK_NO([CXXFLAGS], [-Wcast-function-type-strict], [-Wno-cast-function-type-strict], [no_cast_function_type_strict])
+# Handled by stringfix.cc which wraps STR() in "%s", for printf-like
+# format arguments.
+#CXX_FLAG_CHECK_NO([CXXFLAGS], [-Wformat-security], [-Wno-format-security], [no_format_security])
 CXX_FLAG_CHECK([CXXFLAGS], [-Wimplicit-fallthrough=0], [wimplicit_fallthrough])
 CXX_FLAG_CHECK([CXXFLAGS], [-fstack-protector], [stackprotector])
 CXX_FLAG_CHECK([CXXFLAGS], [-fstack-protector-strong], [stackprotectorstrong])
@@ -95,8 +100,7 @@ EGG_CHECK_SOCKLEN_T
 # Check for inconsistent random() functions
 EGG_CHECK_RANDOM_MAX
 
-# Create static binaries
-EGG_CHECK_CCSTATIC
+
 AC_SUBST(DEBCXXFLAGS)
 AC_SUBST(DEBLDFLAGS)
 

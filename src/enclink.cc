@@ -430,7 +430,7 @@ void link_send(int idx, const char *format, ...)
 
 void link_done(int idx)
 {
-  dprintf(-dcc[idx].sock, STR("neg.\n"));
+  dprintf(-dcc[idx].sock, "%s", STR("neg.\n"));
 }
 
 int link_find_by_type(int type)
