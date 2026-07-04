@@ -65,13 +65,14 @@ struct dcc_t {
   char simulbot[HANDLEN + 1];       /* used for hub->leaf cmd simulation, holds bot that results should be sent to */
   char hash[MD5_HASH_LENGTH + 1];                /* used for dcc authing */
   char shahash[SHA_HASH_LENGTH + 1];
+  char shahash_new[SHA_HASH_LENGTH + 1];       /* SHA1 link hash (rand + ciphers) — downgrade-protected */
   char nick[NICKLEN];
   char whois[UHOSTLEN];
   char host[UHOSTLEN];
 #ifdef USE_IPV6
   char host6[121];              /* easier.. ipv6 address in regular notation (3ffe:80c0:225::) */
 #endif /* USE_IPV6 */
-  int8_t cflags;	 	/* Color status flags. */
+  int cflags;	 	/* Color status flags. */
 };
 
 struct dns_info {

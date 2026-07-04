@@ -405,11 +405,7 @@ cont_link(int idx, char *buf, int ii)
   dcc[idx].type = &DCC_BOT_NEW;
   dcc[idx].u.bot->numver = 0;
 
-  if (ii == 3)
-    dprintf(idx, STR("-%s\n"), conf.bot->nick);
-    /* wait for "neg?" now */
-
-  /* now we wait to negotiate an encryption */
+  /* wait for the greeting line in dcc_bot_new to negotiate encryption */
   return;
 }
 
@@ -421,6 +417,14 @@ dcc_bot_new(int idx, char *buf, int x)
 
   strip_telnet(dcc[idx].sock, buf, &x);
   code = newsplit(&buf);
+
+  /* Detect the hub's " \n" greeting (empty after newsplit) and initiate encryption */
+  if (!dcc[idx].encrypt && !code[0]) {
+    dprintf(idx, STR("-%s\n"), conf.bot->nick);
+    dcc[idx].encrypt = 1;
+    return;
+  }
+
   if (!strcasecmp(code, "goodbye!")) {
     greet_new_bot(idx);
   } else if (!strcasecmp(code, "v")) {
@@ -1009,6 +1013,11 @@ dcc_chat_pass(int idx, char *buf, int atr)
       }
 
       dcc[idx].encrypt = 2;
+      socklist[snum].encstatus = 1;
+      if (socklist[snum].enclink >= 0 &&
+          enclink[socklist[snum].enclink].type == LINK_GHOSTCASE3) {
+        putlog(LOG_BOTS, "*", "Hint: %s linked using AES-ECB (legacy). Update to v1.5.0+ for ChaCha20-Poly1305 encryption.", dcc[idx].nick);
+      }
       if (dcc[idx].bot) {
         dcc[idx].type = &DCC_BOT_NEW;
         dcc[idx].u.bot = (struct bot_info *) calloc(1, sizeof(struct bot_info));
@@ -1033,9 +1042,15 @@ dcc_chat_pass(int idx, char *buf, int atr)
         char *hash = newsplit(&buf);
 
         int hash_n = strcmp(dcc[idx].shahash, hash);
+        bool sent_v2 = (dcc[idx].shahash_new[0] != 0);
+        int hash_n2 = sent_v2 ? strcmp(dcc[idx].shahash_new, hash) : 1;
+        putlog(LOG_DEBUG, "*", "neg hash check: sent_v2=%d hash='%.16s...' old_hash='%.16s...' new_hash='%.16s...' hash_n=%d hash_n2=%d",
+          sent_v2, hash, dcc[idx].shahash, dcc[idx].shahash_new, hash_n, hash_n2);
         OPENSSL_cleanse(dcc[idx].shahash, sizeof(dcc[idx].shahash));
+        OPENSSL_cleanse(dcc[idx].shahash_new, sizeof(dcc[idx].shahash_new));
         OPENSSL_cleanse(hash, strlen(hash));
-        if (hash_n) {
+        /* if hub sent v2, prefer new-format hash but accept old for backward compat */
+        if ((sent_v2 && hash_n2 && hash_n) || (!sent_v2 && hash_n)) {
           putlog(LOG_WARN, "*", STR("%s attempted to negotiate an encryption with an invalid hash."), dcc[idx].nick);
           killsock(dcc[idx].sock);
           lostdcc(idx);
@@ -1911,13 +1926,26 @@ dcc_telnet_pass(int idx, int atr)
   
       make_rand_str(rand, 50);
 
-      link_hash(idx, rand);
-
-      
+      /* Build cipher list */
       for (i = 0; enclink[i].name; i++) {
         if (enclink[i].type == LINK_CLEARTEXT && !link_cleartext) continue;
         simple_snprintf(&buf[strlen(buf)], sizeof(buf) - strlen(buf), "%d ", enclink[i].type);
       }
+
+      /* old-format hash (rand only, for backward compat) */
+      link_hash(idx, rand, NULL);
+
+      /* new-format hash (rand + ciphers + v2, downgrade-protected) */
+      {
+        char hash[1024] = "";
+        simple_snprintf(&buf[strlen(buf)], sizeof(buf) - strlen(buf), "v2 ");
+        simple_snprintf(hash, sizeof(hash), STR("enclink%s%s"), rand, buf);
+        strlcpy(dcc[idx].shahash_new, SHA1(hash), SHA_HASH_LENGTH + 1);
+        putlog(LOG_DEBUG, "*", "neg? hash: rand='%.16s...' buf='%s' sha='%.16s...'", rand, buf, dcc[idx].shahash_new);
+        SHA1(NULL);
+        OPENSSL_cleanse(hash, sizeof(hash));
+      }
+
       dprintf(-dcc[idx].sock, "neg? %s %s\n", rand, buf);
     } else {
       /* Turn off remote telnet echo (send IAC WILL ECHO). */

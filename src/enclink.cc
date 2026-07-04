@@ -28,6 +28,12 @@
 #include "dcc.h"
 #include "net.h"
 #include "misc.h"
+#include "src/crypto/chacha_util.h"
+
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+
+#include <bdlib/src/base64.h>
 
 #include <stdarg.h>
 
@@ -98,6 +104,7 @@ static void ghost_link_case(int idx, direction_t direction)
       free(tmp2);
       strlcpy(socklist[snum].okey, initkey, ENC_KEY_LEN + 1);
       strlcpy(socklist[snum].ikey, initkey, ENC_KEY_LEN + 1);
+      socklist[snum].oseed = socklist[snum].iseed;
       OPENSSL_cleanse(initkey, sizeof(initkey));
     } else {
       socklist[snum].encstatus = 1;
@@ -134,11 +141,43 @@ rotate_key(char* key, int& seed)
   }
 }
 
+/* HMAC-SHA256 based key rotation for chacha-poly-v2 links.
+ * Derives the next key from the current key using HMAC-SHA256.
+ * Output is base64-encoded to fit the char[33] C-string key storage
+ * (no embedded nulls, strlen always returns 32).
+ * Fully deterministic across all OpenSSL versions/platforms.
+ * Provides forward secrecy: compromising one key does not expose past messages.
+ */
+static void
+chacha_rotate(char* key, int& seed)
+{
+  if (seed == 0)
+    seed = 1;
+
+  unsigned char counter[4];
+  *(uint32_t *)counter = (uint32_t)seed;
+
+  unsigned char hmac_out[32];
+  unsigned int outlen = 32;
+
+  HMAC(EVP_sha256(),
+       (const unsigned char *)key, 32,
+       counter, 4,
+       hmac_out, &outlen);
+
+  bd::String b64key = bd::base64Encode(
+      bd::String((const char *)hmac_out, 24));
+
+  memcpy(key, b64key.c_str(), 32);
+  OPENSSL_cleanse(hmac_out, 32);
+  seed++;
+}
+
 static int ghost_read(int snum, char *src)
 {
   char *line = decrypt_string(socklist[snum].ikey, src);
 
-  strcpy(src, line);
+  strlcpy(src, line, SGRAB + 1);
   OPENSSL_cleanse(line, strlen(line) + 1);
   free(line);
   rotate_key(socklist[snum].ikey, socklist[snum].iseed);
@@ -147,11 +186,15 @@ static int ghost_read(int snum, char *src)
 
 static const char *ghost_write(int snum, const char *src, size_t *len)
 {
-  static char buf[SGRAB + 14] = "";
+  static char buf[SGRAB * 2 + 64] = "";
   char *srcbuf = NULL, *line = NULL, *eol = NULL, *eline = NULL;
 
   const size_t bufsiz = *len + 9 + 1;
   srcbuf = (char *) calloc(1, bufsiz);
+  if (!srcbuf) {
+    *len = 0;
+    return NULL;
+  }
   strlcpy(srcbuf, src, bufsiz);
   line = srcbuf;
   buf[0] = 0;
@@ -202,6 +245,174 @@ void ghost_parse(int idx, int snum, char *buf)
     putlog(LOG_BOTS, "*", STR("Handshake with %s succeeded, we're linked."), dcc[idx].nick);
     link_done(idx);
   }
+}
+
+static void chacha20_poly1305_link_case(int idx, direction_t direction)
+{
+  int snum = findanysnum(dcc[idx].sock);
+
+  if (likely(snum >= 0)) {
+    char initkey[33] = "", *tmp2 = NULL;
+    char *keyp = NULL, *nick1 = NULL, *nick2 = NULL;
+    in_port_t port = 0;
+    const char salt1[] = SALT1;
+    const char salt2[] = SALT2;
+
+    if (direction == TO) {
+      keyp = socklist[snum].ikey;
+      nick1 = strdup(dcc[idx].nick);
+      for (int j = 0; j < dcc_total; j++) {
+       if (dcc[j].type && dcc[j].sock == dcc[idx].u.relay->sock && dcc[j].type == &DCC_RELAYING) {
+         nick2 = strdup(dcc[j].nick);
+         break;
+       }
+      }
+      if (!nick2)
+        nick2 = strdup(conf.bot->nick);
+      port = htons(dcc[idx].port);
+    } else if (direction == FROM) {
+      keyp = socklist[snum].okey;
+      nick1 = strdup(conf.bot->nick);
+      nick2 = strdup(dcc[idx].nick);
+
+      struct sockaddr_in sa;
+      socklen_t socklen = sizeof(sa);
+
+      bzero(&sa, socklen);
+      getsockname(socklist[snum].sock, (struct sockaddr *) &sa, &socklen);
+      if (sa.sin_family == AF_UNIX)
+        port = 0;
+      else
+        port = sa.sin_port;
+    }
+
+    char tmp[SALT1LEN + 1 + SALT2LEN + 1 + 4 + 1 + HANDLEN + 1 + HANDLEN + 1] = "";
+    simple_snprintf(tmp, sizeof(tmp), STR("%s@%s@%4x@%s@%s"), salt1, salt2, port, strtoupper(nick1), strtoupper(nick2));
+    free(nick1);
+    free(nick2);
+    strlcpy(keyp, SHA1(tmp), ENC_KEY_LEN + 1);
+    OPENSSL_cleanse(tmp, sizeof(tmp));
+    SHA1(NULL);
+
+    if (direction == FROM) {
+      make_rand_str(initkey, 32);
+      socklist[snum].oseed = random();
+      socklist[snum].iseed = socklist[snum].oseed;
+      {
+        bd::String encrypted = crypto::encrypt_chacha20_poly1305(salt2, initkey, "");
+        tmp2 = strdup(encrypted.c_str());
+      }
+      putlog(LOG_BOTS, "*", STR("Sending encrypted link handshake to %s..."), dcc[idx].nick);
+
+      link_send(idx, STR("elink %s %d\n"), tmp2, socklist[snum].oseed);
+
+      socklist[snum].gz = 1;
+      free(tmp2);
+      strlcpy(socklist[snum].okey, initkey, ENC_KEY_LEN + 1);
+      strlcpy(socklist[snum].ikey, initkey, ENC_KEY_LEN + 1);
+      OPENSSL_cleanse(initkey, sizeof(initkey));
+    } else {
+      socklist[snum].gz = 1;
+    }
+  } else {
+    putlog(LOG_MISC, "*", STR("Couldn't find socket for %s connection?? Shouldn't happen :/"), dcc[idx].nick);
+    killsock(dcc[idx].sock);
+    lostdcc(idx);
+  }
+}
+
+
+static void chacha20_poly1305_parse(int idx, int snum, char *buf)
+{
+  char *code = newsplit(&buf);
+
+  if (!strcasecmp(code, STR("elink"))) {
+    const char salt2[] = SALT2;
+    bd::String decrypted = crypto::decrypt_chacha20_poly1305(salt2, newsplit(&buf));
+
+    if (!decrypted.length()) {
+      putlog(LOG_WARN, "*", "MAC verification failed on handshake from %s", dcc[idx].nick);
+      killsock(dcc[idx].sock);
+      lostdcc(idx);
+      return;
+    } else {
+      char tmp[33] = "";
+      strlcpy(tmp, decrypted.c_str(), sizeof(tmp));
+      OPENSSL_cleanse(tmp, sizeof(tmp));
+    }
+
+    strlcpy(socklist[snum].okey, decrypted.c_str(), ENC_KEY_LEN + 1);
+
+    strlcpy(socklist[snum].ikey, socklist[snum].okey, ENC_KEY_LEN + 1);
+    if (decrypted.length())
+      OPENSSL_cleanse(const_cast<char*>(decrypted.c_str()), decrypted.length());
+
+    socklist[snum].iseed = atoi(buf);
+    socklist[snum].oseed = atoi(buf);
+    putlog(LOG_BOTS, "*", STR("Handshake with %s succeeded, we're linked."), dcc[idx].nick);
+    link_done(idx);
+    socklist[snum].encstatus = 1;
+  }
+}
+
+static int chacha20_poly1305_read(int snum, char *src)
+{
+  bd::String decrypted = crypto::decrypt_chacha20_poly1305(socklist[snum].ikey, src);
+
+  if (!decrypted.length()) {
+    putlog(LOG_WARN, "*", "MAC verification failed on link");
+    killsock(socklist[snum].sock);
+    for (int j = 0; j < dcc_total; j++) {
+      if (dcc[j].sock == socklist[snum].sock) {
+        lostdcc(j);
+        break;
+      }
+    }
+    return -1;
+  }
+
+  strlcpy(src, decrypted.c_str(), SGRAB + 1);
+  if (decrypted.length())
+    OPENSSL_cleanse(const_cast<char*>(decrypted.c_str()), decrypted.length());
+  chacha_rotate(socklist[snum].ikey, socklist[snum].iseed);
+  return OK;
+}
+
+static const char *chacha20_poly1305_write(int snum, const char *src, size_t *len)
+{
+  static char buf[SGRAB * 2 + 64] = "";
+  char *srcbuf = NULL, *line = NULL, *eol = NULL;
+
+  const size_t bufsiz = *len + 9 + 1;
+  srcbuf = (char *) calloc(1, bufsiz);
+  if (!srcbuf) {
+    *len = 0;
+    return NULL;
+  }
+  strlcpy(srcbuf, src, bufsiz);
+  line = srcbuf;
+  buf[0] = 0;
+
+  eol = strchr(line, '\n');
+  while (eol) {
+    *eol++ = 0;
+    bd::String encrypted = crypto::encrypt_chacha20_poly1305(socklist[snum].okey, line, "");
+    chacha_rotate(socklist[snum].okey, socklist[snum].oseed);
+    strlcat(buf, encrypted.c_str(), sizeof(buf));
+    *len = strlcat(buf, "\n", sizeof(buf));
+    line = eol;
+    eol = strchr(line, '\n');
+  }
+  if (line[0]) {
+    bd::String encrypted = crypto::encrypt_chacha20_poly1305(socklist[snum].okey, line, "");
+    chacha_rotate(socklist[snum].okey, socklist[snum].oseed);
+    strlcat(buf, encrypted.c_str(), sizeof(buf));
+    *len = strlcat(buf, "\n", sizeof(buf));
+  }
+  OPENSSL_cleanse(srcbuf, bufsiz);
+  free(srcbuf);
+
+  return buf;
 }
 
 void link_send(int idx, const char *format, ...)
@@ -264,8 +475,13 @@ const char *link_write(int snum, const char *buf, size_t *len)
 {
   int i = socklist[snum].enclink;
 
-  if (i != -1 && enclink[i].write)
-    return ((enclink[i].write) (snum, buf, len));
+  if (i != -1 && enclink[i].write) {
+    const char *result = (enclink[i].write) (snum, buf, len);
+    if (result)
+      return result;
+    *len = 0;
+    return buf;
+  }
 
   return buf;
 }
@@ -276,42 +492,61 @@ void link_challenge_to(int idx, char *buf) {
   if (snum >= 0) {
     char *rand = newsplit(&buf), *tmp = strdup(buf), *tmpp = tmp, *p = NULL;
     int i = -1;
+    bool v2 = false;
 
     while ((p = newsplit(&tmp))[0]) {
+      if (!strcmp(p, STR("v2"))) {
+        v2 = true;
+        continue;
+      }
       if (str_isdigit(p)) {
         int type = atoi(p);
+        int found = link_find_by_type(type);
 
-        /* pick the first (lowest num) one that we share */
-        i = link_find_by_type(type);
-
-        if (i != -1)
-          break;
+        /* Take the first match but keep scanning for "v2" token */
+        if (found != -1 && i == -1)
+          i = found;
       }
     }
-    free(tmpp);
 
     // No shared type!
     if (i == -1) {
       sdprintf(STR("No shared cipher with %s"), dcc[idx].nick);
       killsock(dcc[idx].sock);
       lostdcc(idx);
+      free(tmpp);
       return;
     }
 
-    sdprintf(STR("Choosing '%s' (%d/%d) for link to %s"), enclink[i].name, enclink[i].type, i, dcc[idx].nick);
-    link_hash(idx, rand);
+    sdprintf(STR("Choosing '%s' (%d/%d) for link to %s (v2=%d)"), enclink[i].name, enclink[i].type, i, dcc[idx].nick, v2);
+    if (v2)
+      link_hash_new(idx, rand, buf);
+    else
+      link_hash(idx, rand, NULL);
     dprintf(-dcc[idx].sock, STR("neg %s %d %s\n"), dcc[idx].shahash, enclink[i].type, dcc[idx].nick);
     socklist[snum].enclink = i;
     link_link(idx, -1, i, TO);
+    free(tmpp);
   }
 }
 
-void link_hash(int idx, char *rand)
+void link_hash(int idx, char *rand, const char *ciphers)
 {
-  char hash[60] = "";
+  char hash[1024] = "";
 
-  /* nothing fancy, just something simple that can stop people from playing */
-  simple_snprintf(hash, sizeof(hash), STR("enclink%s"), rand);
+  simple_snprintf(hash, sizeof(hash), STR("enclink%s%s"), rand, ciphers ? ciphers : "");
+  strlcpy(dcc[idx].shahash, SHA1(hash), SHA_HASH_LENGTH + 1);
+  SHA1(NULL);
+  OPENSSL_cleanse(hash, sizeof(hash));
+  return;
+}
+
+void link_hash_new(int idx, char *rand, const char *ciphers)
+{
+  char hash[1024] = "";
+
+  /* Include cipher list in hash to prevent downgrade attacks */
+  simple_snprintf(hash, sizeof(hash), STR("enclink%s%s"), rand, ciphers);
   strlcpy(dcc[idx].shahash, SHA1(hash), SHA_HASH_LENGTH + 1);
   SHA1(NULL);
   OPENSSL_cleanse(hash, sizeof(hash));
@@ -321,6 +556,8 @@ void link_hash(int idx, char *rand)
 void link_parse(int idx, char *buf)
 {
   int snum = findanysnum(dcc[idx].sock);
+  if (snum < 0)
+    return;
   int i = socklist[snum].enclink;
 
   if (i >= 0 && enclink[i].parse)
@@ -344,7 +581,8 @@ void link_get_method(int idx)
 
 /* the order of entries here determines which will be picked */
 struct enc_link enclink[] = {
-  { "ghost+case3", LINK_GHOSTCASE3, ghost_link_case, ghost_write, ghost_read, ghost_parse },
+  { "chacha-poly", LINK_CHACHA20_POLY1305, chacha20_poly1305_link_case, chacha20_poly1305_write, chacha20_poly1305_read, chacha20_poly1305_parse },
+  { "aes-ecb", LINK_GHOSTCASE3, ghost_link_case, ghost_write, ghost_read, ghost_parse },
   { "cleartext", LINK_CLEARTEXT, NULL, NULL, NULL, NULL },
   { NULL, 0, NULL, NULL, NULL, NULL }
 };

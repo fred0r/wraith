@@ -98,8 +98,8 @@ colorbuf(char *buf, size_t len, int idx, size_t bufsiz)
   int cidx = coloridx(idx);
   int schar = 0;
   char buf3[1024] = "", buf2[15] = "", c = 0;
-  static int8_t stdout_cflags = 0;
-  int8_t *cflags;
+  static int stdout_cflags = 0;
+  int *cflags;
 
   if (idx == -1) {
     cflags = &stdout_cflags;

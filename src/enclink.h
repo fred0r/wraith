@@ -16,7 +16,8 @@ enum {
         LINK_CLEARTEXT,
 	LINK_GHOSTCASE, /* attic */
 	LINK_GHOSTCASE2, /* attic */
-	LINK_GHOSTCASE3
+        LINK_GHOSTCASE3,
+        LINK_CHACHA20_POLY1305 = 9
 };
 enum direction_t {
         FROM,
@@ -45,7 +46,8 @@ extern int link_find_by_type(int) __attribute__((pure));
 extern void link_link(int, int, int, direction_t);
 extern const char *link_write(int, const char *, size_t *);
 extern int link_read(int, char *);
-extern void link_hash(int, char *);
+extern void link_hash(int, char *, const char *);
+extern void link_hash_new(int, char *, const char *);
 extern void link_send(int, const char *, ...) __attribute__((format(printf, 2, 3)));
 extern void link_done(int);
 extern void link_parse(int, char *);

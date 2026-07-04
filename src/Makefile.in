@@ -81,6 +81,7 @@ OBJS = auth.So \
 	compat/strsep.o \
 	crypto/aes_util.o \
 	crypto/bf_util.o \
+	crypto/chacha_util.o \
 	crypto/dh_util.o
 
 MAKE_GENERIC = $(MAKE) 'MAKE=$(MAKE)' 'MAKEFLAGS=$(MAKEFLAGS)' 'CXX=$(CXX)' 'LD=$(LD)' 'STRIP=$(STRIP)' 'CXXFLAGS=$(CXXFLAGS)' 'CFLGS=$(CFLGS)' 'CCDEPMODE=$(CCDEPMODE)'
