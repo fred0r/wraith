@@ -1471,4 +1471,60 @@ int skipline (char *line, int *skip) {
   }
   return (*skip);
 }
+
+const char *tz_format(int offset)
+{
+  static char buf[16] = "";
+  int hours, mins;
+
+  if (offset == 0) {
+    strlcpy(buf, "UTC", sizeof(buf));
+    return buf;
+  }
+
+  hours = offset / 3600;
+  mins = (offset % 3600) / 60;
+
+  if (mins)
+    snprintf(buf, sizeof(buf), "UTC%+d:%02d", hours, mins < 0 ? -mins : mins);
+  else
+    snprintf(buf, sizeof(buf), "UTC%+d", hours);
+
+  return buf;
+}
+
+int tz_parse(const char *str)
+{
+  int sign = 1, hours = 0, mins = 0;
+  const char *p = str;
+
+  if (!str || !str[0])
+    return TZ_ERR;
+
+  if (!strncasecmp(p, "UTC", 3))
+    p += 3;
+
+  if (*p == '+')      { sign = 1;  p++; }
+  else if (*p == '-') { sign = -1; p++; }
+  else if (*p == '\0') return 0;
+  else return TZ_ERR;
+
+  if (!*p || !isdigit((unsigned char)*p))
+    return TZ_ERR;
+
+  hours = atoi(p);
+  while (*p && isdigit((unsigned char)*p)) p++;
+
+  if (*p == ':') {
+    p++;
+    if (!*p || !isdigit((unsigned char)*p)) return TZ_ERR;
+    mins = atoi(p);
+    while (*p && isdigit((unsigned char)*p)) p++;
+  }
+
+  if (*p != '\0')           return TZ_ERR;
+  if (hours < 0 || hours > 23 || mins < 0 || mins > 59) return TZ_ERR;
+
+  return sign * (hours * 3600 + mins * 60);
+}
 /* vim: set sts=2 sw=2 ts=8 et: */

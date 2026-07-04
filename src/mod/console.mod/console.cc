@@ -54,6 +54,7 @@ struct console_info {
   int channels;
   int bots;
   int whom;
+  int tz_offset;
 };
 
 static bool
@@ -84,6 +85,8 @@ console_unpack(struct userrec *u, struct user_entry *e)
   ci->bots = atoi(arg);
   arg = newsplit(&par);
   ci->whom = atoi(arg);
+  arg = newsplit(&par);
+  ci->tz_offset = atoi(arg);
 
   list_type_kill(e->u.list);
   e->u.extra = ci;
@@ -109,10 +112,11 @@ console_write_userfile(bd::Stream& stream, const struct userrec *u, const struct
 
   struct console_info *i = (struct console_info *) e->u.extra;
 
-  stream << bd::String::printf("--CONSOLE %s %s %s %d %d %d %d %d %d %d %d\n",
+  stream << bd::String::printf("--CONSOLE %s %s %s %d %d %d %d %d %d %d %d %d\n",
                i->channel, masktype(i->conflags),
                stripmasktype(i->stripflags), i->echoflags,
-               i->page, i->conchan, i->color, i->banner, i->channels, i->bots, i->whom);
+               i->page, i->conchan, i->color, i->banner, i->channels, i->bots, i->whom,
+               i->tz_offset);
 }
 
 static bool
@@ -135,9 +139,9 @@ console_set(struct userrec *u, struct user_entry *e, void *buf)
   if (!noshare && !u->bot) {
     char string[501] = "";
 
-    simple_snprintf(string, sizeof string, "%s %s %s %d %d %d %d %d %d %d %d", ci->channel,
+    simple_snprintf(string, sizeof string, "%s %s %s %d %d %d %d %d %d %d %d %d", ci->channel,
                  masktype(ci->conflags), stripmasktype(ci->stripflags), ci->echoflags, ci->page, ci->conchan,
-                 ci->color, ci->banner, ci->channels, ci->bots, ci->whom);
+                 ci->color, ci->banner, ci->channels, ci->bots, ci->whom, ci->tz_offset);
     /* shareout("c %s %s %s\n", e->type->name, u->handle, string); */
     shareout("c CONSOLE %s %s\n", u->handle, string);
   }
@@ -177,6 +181,8 @@ console_gotshare(struct userrec *u, struct user_entry *e, char *par, int idx)
   ci->bots = atoi(arg);
   arg = newsplit(&par);
   ci->whom = atoi(arg);
+  arg = newsplit(&par);
+  ci->tz_offset = atoi(arg);
 
   e->u.extra = ci;
   struct chat_info dummy;
@@ -217,6 +223,7 @@ console_gotshare(struct userrec *u, struct user_entry *e, char *par, int idx)
         dcc[i].status |= STAT_WHOM;
       else
         dcc[i].status &= ~STAT_WHOM;
+      dcc[i].u.chat->tz_offset = ci->tz_offset;
     }
   }
   return 1;
@@ -239,6 +246,8 @@ console_display(int idx, struct user_entry *e, struct userrec *u)
     dprintf(idx, "    Login settings:\n");
     dprintf(idx, "     Banner:   $b%-3s$b   Bots: $b%-3s$b\n", i->banner ? "on" : "off", i->bots ? "on" : "off");
     dprintf(idx, "     Channels: $b%-3s$b   Whom: $b%-3s$b\n", i->channels ? "on" : "off", i->whom ? "on" : "off");
+    if (i->tz_offset)
+      dprintf(idx, "    Timezone: $b%s$b\n", tz_format(i->tz_offset));
   }
 }
 
@@ -297,6 +306,7 @@ console_chon(char *handle, int idx)
         dcc[idx].status |= STAT_WHOM;
       else
         dcc[idx].status &= ~STAT_WHOM;
+      dcc[idx].u.chat->tz_offset = i->tz_offset;
     }
     if ((dcc[idx].u.chat->channel >= 0) && (dcc[idx].u.chat->channel < GLOBAL_CHANS)) {
       botnet_send_join_idx(idx);
@@ -343,6 +353,7 @@ console_store(int idx, char *par, bool displaySave)
     i->whom = 1;
   else
     i->whom = 0;
+  i->tz_offset = dcc[idx].u.chat->tz_offset;
 
   i->conchan = dcc[idx].u.chat->channel;
   if (par) {
@@ -357,6 +368,8 @@ console_store(int idx, char *par, bool displaySave)
     dprintf(idx, "    Login settings:\n");
     dprintf(idx, "     Banner:   $b%-3s$b   Bots: $b%-3s$b\n", i->banner ? "on" : "off", i->bots ? "on" : "off");
     dprintf(idx, "     Channels: $b%-3s$b   Whom: $b%-3s$b\n", i->channels ? "on" : "off", i->whom ? "on" : "off");
+    if (i->tz_offset)
+      dprintf(idx, "    Timezone: $b%s$b\n", tz_format(i->tz_offset));
 
   }
   set_user(&USERENTRY_CONSOLE, dcc[idx].user, i);

@@ -4770,6 +4770,24 @@ void cmd_test(int idx, char *par)
   putlog(LOG_CMDS, "*", "#%s# test", dcc[idx].nick);
 }
 
+static void cmd_tz(int idx, char *par)
+{
+  if (!par[0]) {
+    dprintf(idx, "Timezone: %s\n", tz_format(dcc[idx].u.chat->tz_offset));
+    return;
+  }
+
+  int offset = tz_parse(par);
+  if (offset == TZ_ERR) {
+    dprintf(idx, "Invalid timezone: %s. Use: UTC, UTC+N, UTC-N, UTC+N:M\n", par);
+    return;
+  }
+
+  dcc[idx].u.chat->tz_offset = offset;
+  console_dostore(idx);
+  dprintf(idx, "Timezone set to %s\n", tz_format(offset));
+}
+
 #ifdef USE_SCRIPT_TCL
 void cmd_tcl(int idx, char *par)
 {
@@ -4930,6 +4948,7 @@ cmd_t C_dcc[] =
   {"hublevel", 		"a", 	(Function) cmd_hublevel, 	NULL, HUB},
   {"lagged", 		"m", 	(Function) cmd_lagged, 		NULL, HUB},
   {"uplink", 		"a", 	(Function) cmd_uplink, 		NULL, HUB},
+  {"tz", 		"", 	(Function) cmd_tz, 		NULL, 0},
   {NULL,		NULL,	NULL,				NULL, 0}
 };
 /* vim: set sts=2 sw=2 ts=8 et: */

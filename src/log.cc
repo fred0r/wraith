@@ -323,8 +323,17 @@ void putlog(int type, const char *chname, const char *format, ...)
   for (idx = 0; idx < dcc_total; idx++) {
     if (dcc[idx].type && (dcc[idx].type == &DCC_CHAT && dcc[idx].simul == -1) && (dcc[idx].u.chat->con_flags & type)) {
       if ((chname[0] == '@') || (chname[0] == '*') || (dcc[idx].u.chat->con_chan[0] == '*') ||
-          (!rfc_casecmp(chname, dcc[idx].u.chat->con_chan)))
-        dprintf(idx, "%s\n", out);
+          (!rfc_casecmp(chname, dcc[idx].u.chat->con_chan))) {
+        if (conf.bot && conf.bot->hub && dcc[idx].u.chat->tz_offset) {
+          char ustamp[34] = "";
+          time_t user_ts = (now + timesync) + dcc[idx].u.chat->tz_offset;
+          struct tm *ut = gmtime(&user_ts);
+          strftime(ustamp, sizeof(ustamp), LOG_TS, ut);
+          dprintf(idx, "%s %s\n", ustamp, va_out);
+        } else {
+          dprintf(idx, "%s\n", out);
+        }
+      }
     }
   }
 

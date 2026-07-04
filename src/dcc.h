@@ -96,6 +96,7 @@ struct chat_info {
   char *away;                   /* non-NULL if user is away             */
   char *su_nick;
   char con_chan[81];            /* with console: what channel to view   */
+  int tz_offset;               /* seconds from UTC for partyline ts    */
 };
 
 struct xfer_info {

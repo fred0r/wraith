@@ -2148,4 +2148,17 @@ See also: match, who, whom%{+m|m}, chattr, chaninfo%{-}
    channels will be shown.
  
 See also: who, chat%{+m}, bots%{-}
+::tz
+###  $btz$b [UTC+N / UTC-N / UTC+N:M / UTC]
+   Sets your timezone for partyline timestamps. Without arguments,
+   shows your current timezone.
+   Examples: .tz UTC+1, .tz UTC-5:30, .tz UTC
+   Setting is saved with your console settings.
+ 
+See also: time, store
+::time
+###  $btime$b
+   Shows your current timezone setting. Use '.tz' to change it.
+ 
+See also: tz
 ::end
