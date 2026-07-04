@@ -2,8 +2,29 @@ These two files need to be located in the same directory.
 ie: c:\mIRC\scripts
 once that is completed, /load -rs c:\path\to\files\wraith.mrc
 
-Currently the script supports 5.80 and up.
+Currently the script supports mIRC 5.80 and up.
+mIRC 7.46+ required for SHA256 (default). mIRC 6.03+ supports MD5 fallback.
 
 type /helpauth once it is loaded.
 
+Setup:
+  /setauth <password> <secpass> <authkey> [hashalgo] [botnick]
+
+  hashalgo: sha256 (default) or md5 (for old bots)
+  botnick:  optional, for per-bot settings
+
+Examples:
+  /setauth mypass mysecpass myauthkey                  (global, sha256)
+  /setauth mypass mysecpass myauthkey md5               (global, md5)
+  /setauth mypass mysecpass myauthkey sha256 hubot      (per-bot)
+
+Show settings:
+  /showauth             (global)
+  /showauth hubot       (per-bot)
+
+Manual hash:
+  /auth -Auth <challenge> <botnick>
+
+The script auto-responds to -Auth in both DCC chat and private messages.
+SHA256 (64 hex chars) is preferred; the bot still accepts MD5 (32 hex chars).
 

@@ -1,0 +1,309 @@
+WeeChat Wraith Authentication Script
+====================================
+
+A Python script for WeeChat IRC client that handles authentication with Wraith
+IRC bot.
+
+Requirements
+------------
+
+- WeeChat 2.0 or later (required for hook_print with extended parameters)
+- WeeChat compiled with Python support
+- This script works with or without the FiSH encryption plugin
+
+Overview
+--------
+
+This script automates the authentication process with the Wraith IRC bot by:
+
+- Computing SHA256 hashes for -Auth challenges from the bot (preferred)
+- MD5 hash responses still accepted by the bot for backward compatibility
+- Handling incoming -Auth requests automatically in private messages
+- Handling incoming -Auth requests automatically in DCC chat
+- Managing authentication credentials (secpass, authkey, password)
+- Supporting both encrypted (FiSH) and unencrypted conversations
+
+The script uses two complementary hooks to catch -Auth requests correctly
+regardless of whether FiSH encryption is in use:
+
+1. Signal hook (irc_server_privmsg): Catches unencrypted -Auth messages early.
+   If the message starts with "+OK " (FiSH encrypted), it is skipped so FiSH
+   can decrypt it first.
+
+2. Print hook (hook_print): Catches -Auth after it has been printed to the
+   buffer. When FiSH is loaded, this hook sees the decrypted message. Without
+   FiSH, this hook also fires on plaintext messages.
+
+This design ensures -Auth is caught exactly once, whether or not FiSH is
+installed.
+
+How Authentication Works
+------------------------
+
+Wraith bot authentication is a multi-step challenge-response process:
+
+  Step 1: User initiates auth
+    /msg <botnick> auth
+
+  Step 2: Bot sends challenge
+    The bot replies with either:
+      auth. <botnick>   (if your hostmask is recognized)
+      auth! <botnick>   (if your hostmask is not recognized)
+
+  Step 3: User sends partyline password
+    /msg <botnick> pass <password>
+    (This is your login password for the bot, NOT auth_password in this script)
+
+  Step 4: Bot sends -Auth challenge (only if auth-key is set on the bot)
+    -Auth <random_string> <botnick>
+
+  Step 5: Script computes and sends response automatically
+    SHA256(random_string + secpass + authkey) = hash
+    /msg <botnick> +Auth <hash>
+
+  Step 6: Bot verifies hash
+    If the hash matches (SHA256 or MD5, both accepted), you are authenticated.
+
+If the bot has NO auth-key configured (.set auth-key ""), Step 4 is skipped
+and you are authed immediately after Step 3.
+
+Credential Sources
+------------------
+
+auth_secpass
+    Your "secpass" (security password) on the bot.
+    Source: Set on the bot with ".secpass <password>" (your own) or
+    ".chsecpass <handle> <password>" (admin sets for you). New users added
+    with ".+user" receive a random secpass automatically.
+    Required for: Computing the -Auth SHA256 hash response.
+
+auth_authkey
+    The bot's "auth-key" setting.
+    Source: Ask the bot admin for this value. Set on the bot with
+    ".set auth-key <key>". If the bot has no auth-key set, hash
+    authentication is skipped entirely.
+    Required for: Computing the -Auth SHA256 hash response.
+
+auth_password
+    A password used by this script to auto-respond to "auth." / "auth!"
+    NOTICE challenges from the bot.
+    How it works: When the script sees "auth." or "auth!" in a NOTICE, it
+    automatically replies with "auth <password>".
+    IMPORTANT: The standard Wraith msg_pass binding expects "pass <password>",
+    not "auth <password>". This script's auth_password is for an alternative
+    response flow and may not work with all bot configurations. It is NOT used
+    for -Auth hash computation.
+    Optional.
+
+Installation
+------------
+
+1. Copy wraith_auth.py to your WeeChat python scripts directory:
+   - Linux/Unix: ~/.weechat/python/
+   - macOS: ~/.weechat/python/
+   - Windows: %APPDATA%\WeeChat\python\
+
+2. Load the script in WeeChat:
+   /python load wraith_auth.py
+
+3. Configure your authentication credentials:
+   /set plugins.var.python.wraith_auth.auth_secpass <your_secpass>
+   /set plugins.var.python.wraith_auth.auth_authkey <your_authkey>
+   /set plugins.var.python.wraith_auth.auth_password <your_password>
+
+Configuration
+-------------
+
+The script uses three settings stored in WeeChat configuration:
+
+  plugins.var.python.wraith_auth.auth_secpass
+    Your secpass from the bot (see "Credential Sources" above).
+
+  plugins.var.python.wraith_auth.auth_authkey
+    The bot's auth-key value (see "Credential Sources" above).
+
+  plugins.var.python.wraith_auth.auth_password
+    Password for auto-responding to auth./auth! notices (optional, see above).
+
+To view current settings:
+  /wraithauth show
+
+Example output:
+  === Wraith Auth Settings ===
+    Password:  mypassword
+    SecPass:   abc123def
+    AuthKey:   secretkey42
+
+Usage
+-----
+
+Manual hash computation:
+  /wraithauth -Auth <challenge_string>
+
+The <challenge_string> is the random string the bot sends after -Auth.
+The script computes SHA256(challenge_string + secpass + authkey) and outputs
++Auth <hash> for you to send back.
+
+Example:
+  Bot sends: -Auth somestring123 hubot
+  You type:  /wraithauth -Auth somestring123
+  Output:    +Auth a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3
+
+Show current settings:
+  /wraithauth show
+
+Automatic Response
+------------------
+
+When the bot sends a -Auth challenge, the script automatically computes the
+correct hash and sends +Auth back. This works in:
+
+- Unencrypted private messages (caught by signal hook)
+- Post-FiSH-decrypted private messages (caught by print hook after FiSH
+  decrypts +OK messages)
+- DCC chat (caught by print hook)
+
+You do not need to do anything manually for standard -Auth challenges.
+
+Features
+--------
+
+- SHA256 hash computation for Wraith -Auth challenges (MD5 still accepted)
+- Automatic -Auth response in private messages (encrypted or plaintext)
+- Automatic -Auth response in DCC chat
+- Settings management for credentials via /wraithauth show
+- UTF-8 encoding support
+- Special character handling (binary data prefixes like \xff\xf9\x01)
+- Dual-hook design prevents double-response with or without FiSH
+- Skips encrypted +OK messages in signal hook to let FiSH decrypt first
+
+How It Works (Technical)
+------------------------
+
+Signal Hook: irc_server_privmsg
+  Fires early for every PRIVMSG received from the IRC server.
+  Format: "server;nick;address;text"
+  If text starts with "+OK ", the message is FiSH-encrypted. The hook skips
+  it so the FiSH plugin can decrypt it and the print hook can catch the
+  decrypted text.
+  If text is plaintext and contains -Auth, the script responds immediately.
+
+Print Hook: hook_print
+  Fires when a message is printed to a buffer.
+  Parameters: (data, buffer, date, tags, displayed, highlight, prefix, message)
+  Only processes private/DCC buffers (localvar_type is "private" or "").
+  Catches -Auth after FiSH decryption (if FiSH is active).
+  Responds with the computed +Auth hash.
+
+Why two hooks?
+  Without FiSH: The signal hook catches plaintext -Auth. The print hook also
+  sees it, but only in buffer context. Both work; no duplication because the
+  signal hook sends the response directly.
+  With FiSH: The signal hook sees +OK (encrypted) and skips it. FiSH decrypts
+  the message. The print hook sees the decrypted -Auth and responds. Without
+  the skip in the signal hook, the script would try to process gibberish.
+
+DCC Chat
+  DCC chat buffers in WeeChat have localvar_type == "" (empty string).
+  The print hook checks for both "private" and "" to handle DCC correctly.
+
+Supported IRC Commands from Original Scripts
+--------------------------------------------
+
+This WeeChat script provides equivalent functionality to:
+
+From irssi script (wraith.pl):
+  - /wraithauth command for manual hash generation
+  - Signal handlers for private messages
+  - Signal handlers for DCC chat messages
+  - Configuration settings (auth_secpass, auth_authkey)
+  - Automatic -Auth response generation
+
+From mIRC script (wraith.mrc):
+  - /wraithauth -Auth <hash> command
+  - Automatic response to -Auth requests
+  - Settings management (/authshow equivalent with /wraithauth show)
+   - SHA256 hash computation
+   - Password/secpass/authkey configuration
+
+Differences from Original Scripts
+---------------------------------
+
+1. Command Syntax:
+   - irssi: /auth <hash>
+   - mIRC:  /auth -Auth <hash>
+   - WeeChat: /wraithauth -Auth <hash> (follows mIRC syntax)
+
+2. Settings Storage:
+   All settings stored in WeeChat config instead of script variables.
+
+3. Automatic Response:
+   Responds automatically to both private message and DCC chat -Auth requests.
+   Works with or without FiSH encryption.
+
+4. Dual-Hook Architecture:
+    Uses both signal hook and print hook to handle encrypted and unencrypted
+    messages correctly, preventing double responses and gibberish processing.
+
+5. Hash Algorithm:
+    Uses SHA256 (64 hex chars) for -Auth responses. The bot still accepts
+    MD5 (32 hex chars) from old clients for backward compatibility.
+
+Troubleshooting
+---------------
+
+If the script doesn't load:
+  - Check WeeChat was compiled with Python support: /python
+  - Verify the script is in the correct directory
+  - Check for Python syntax errors in the WeeChat core buffer
+
+If authentication fails:
+  - Verify auth_secpass matches your secpass on the bot exactly
+  - Verify auth_authkey matches the bot's .set auth-key value exactly
+  - Check that you have a secpass set on the bot (.secpass or .chsecpass)
+  - Check that the bot actually has auth-key set (if not, -Auth is skipped)
+  - Review the bot's auth log for details
+
+Error messages from the script:
+
+  [wraith_auth] ERROR: auth_secpass and auth_authkey not configured
+    Both auth_secpass and auth_authkey must be set via /set. The script
+    cannot compute the -Auth hash without both values.
+
+  [wraith_auth] ERROR: Could not find server buffer for <server>
+    The script could not locate the IRC server buffer to send the reply.
+    Ensure you are connected to the correct server and the buffer exists.
+
+  Double responses to -Auth:
+    This is harmless. If FiSH is not installed, both hooks may fire. The
+    bot ignores duplicate +Auth responses.
+
+  Auto-response not firing on encrypted messages:
+    Ensure the FiSH plugin is loaded and decrypting messages. The print hook
+    only sees decrypted text. Check that the signal hook is correctly skipping
+    +OK messages (it should; this is built-in).
+
+Security Considerations
+-----------------------
+
+WeeChat stores plugin variables (plugins.var.python.wraith_auth.*) in plaintext
+in ~/.weechat/plugins.conf. Your secpass, authkey, and auth_password are
+written to this file unencrypted.
+
+Recommendations:
+  - Restrict file permissions on ~/.weechat/:
+      chmod 700 ~/.weechat
+      chmod 600 ~/.weechat/plugins.conf
+  - Do not share your WeeChat configuration directory with other users.
+  - If you need to remove credentials, use /unset:
+      /unset plugins.var.python.wraith_auth.auth_secpass
+      /unset plugins.var.python.wraith_auth.auth_authkey
+      /unset plugins.var.python.wraith_auth.auth_password
+  - Settings set with /set persist across WeeChat restarts automatically.
+
+Support
+-------
+-------
+
+Documentation: https://github.com/wraith/wraith/wiki/AuthSystem
+Based on: irssi wraith.pl and mIRC wraith.mrc scripts

@@ -63,7 +63,8 @@ struct dcc_t {
   int dns_id;
   in_port_t port;
   char simulbot[HANDLEN + 1];       /* used for hub->leaf cmd simulation, holds bot that results should be sent to */
-  char hash[MD5_HASH_LENGTH + 1];                /* used for dcc authing */
+  char hash[SHA256_HASH_LENGTH + 1];                /* SHA256 auth hash (64 + null) */
+  char hash_md5[MD5_HASH_LENGTH + 1];               /* MD5 auth hash for backward compat */
   char shahash[SHA_HASH_LENGTH + 1];
   char shahash_new[SHA_HASH_LENGTH + 1];       /* SHA1 link hash (rand + ciphers) — downgrade-protected */
   char nick[NICKLEN];

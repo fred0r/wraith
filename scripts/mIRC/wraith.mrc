@@ -5,46 +5,42 @@ ON *:LOAD:{
 
 alias helpauth {
   echo -a Type /setauth
-  echo -a /auth -Auth string <botnick> <- That will return the md5 hash. (use for telnet possibly)
+  echo -a /auth -Auth string <botnick> <- That will return the sha256 hash (use md5 for old bots with /setauth ... md5)
   echo -a /showauth [botnick] will show what settings will be used.
 }
 
 alias setauth {
   if (!$3) {
-    echo -a usage: /setauth password secpass authkey <botnick>
+    echo -a usage: /setauth password secpass authkey [hashalgo] <botnick>
+    echo -a hashalgo: sha256 (default) or md5 (for old bots)
     echo -a <botnick> is optional if the authkey specified is for that bot only...
     echo -a Use a . in place of a param if you do not have one set yet. (pass excluded)
   }
   else {
-    if ($4) {
-      set %w.pass. $+ $4 $1
-      if ($2 != .) {
-        set %w.secpass. $+ $4 $2
-      } 
+    if (!$5) {
+      ; no botnick specified, check if 4th param is hashalgo or botnick
+      if ($4 != . && $4 != md5 && $4 != sha256 && $4) { var %bn = $4 }
       else {
-        set %w.secpass. $+ $4
+        if ($4) { var %algo = $4 }
       }
-      if ($3 != .) {
-        set %w.authkey. $+ $4 $3
-      } 
-      else {
-        set %w.authkey. $+ $4
-      }
+    }
+    else { var %bn = $5 | var %algo = $4 }
+    if ($gettok(%algo, 1, 46) != sha256 && $gettok(%algo, 1, 46) != md5) { var %algo = sha256 }
+    if (%bn) {
+      set %w.pass. $+ %bn $1
+      if ($2 != .) { set %w.secpass. $+ %bn $2 }
+      else { set %w.secpass. $+ %bn }
+      if ($3 != .) { set %w.authkey. $+ %bn $3 }
+      else { set %w.authkey. $+ %bn }
+      set %w.hashalgo. $+ %bn %algo
     }
     else {
       set %w.pass $1
-      if ($2 != .) {
-        set %w.secpass $2
-      } 
-      else {
-        set %w.secpass
-      }
-      if ($3 != .) {
-        set %w.authkey $3
-      } 
-      else {
-        set %w.authkey
-      }
+      if ($2 != .) { set %w.secpass $2 }
+      else { set %w.secpass }
+      if ($3 != .) { set %w.authkey $3 }
+      else { set %w.authkey }
+      set %w.hashalgo %algo
     }
     echo -a set!
   }
@@ -54,7 +50,7 @@ ALIAS showauth {
   if ($1) {
     var %s ( $+ $1 $+ )
   }
-  echo -a %s PASS: $wpass($1) :: SECPASS: $wsecpass($1) :: AUTHKEY: $wauthkey($1)
+  echo -a %s PASS: $wpass($1) :: SECPASS: $wsecpass($1) :: AUTHKEY: $wauthkey($1) :: HASH: $whashalgo($1)
 }
 
 ALIAS -l psy {
@@ -65,8 +61,8 @@ ALIAS -l psy {
 
 ON *:CHAT:*:{
   var %c = %auth. [ $+ [ $nick ] ]
-  if (($1 === -Auth || $1 === ÿû-Auth) && $len($2) == 50) {
-    msg =$nick +Auth $wmd5($2 $+ $wsecpass($3) $+ $wauthkey($3))
+  if (($1 === -Auth || $1 === ï¿½ï¿½ï¿½-Auth) && $len($2) == 50) {
+    msg $nick +Auth $whash($2 $+ $wsecpass($3) $+ $wauthkey($3), , $3)
   }
 }
 
@@ -89,9 +85,10 @@ ON *:TEXT:auth*:?:{
 ON *:TEXT:*:?:{ 
   var %c = %auth. [ $+ [ $nick ] ]
   if (!$psy($left($nick, 1)) && !%c) { return }
-  if (($1 === -Auth || $1 === ÿû-Auth) && $len($2) == 50) {
-    msg $nick +Auth $wmd5($2 $+ $wsecpass($3) $+ $wauthkey($3))
+  if (($1 === -Auth || $1 === ï¿½ï¿½ï¿½-Auth) && $len($2) == 50) {
+    msg $nick +Auth $whash($2 $+ $wsecpass($3) $+ $wauthkey($3), , $3)
   }
+}
 }
 
 ALIAS -l wraith {
@@ -106,21 +103,25 @@ ALIAS -l wraith {
 alias wauthkey { return $wraith(w.authkey,$1) }
 alias wpass { return $wraith(w.pass,$1) }
 alias wsecpass { return $wraith(w.secpass,$1) }
+alias whashalgo { return $iif($var(%w.hashalgo. $+ $1), $v1, $iif($var(%w.hashalgo), $v1, sha256)) }
 
 alias wmd5 {
-  if ($version < 5.8) {
-    echo 8 -a This script will only work for mIRC 5.8 and up.
-  }
-  if ($version >= 6.03) {
-    return $md5($1)
-  } 
-  else {
+  ; deprecated - use whash instead
+  return $whash($1,md5)
+}
+alias whash {
+  var %algo = $iif($2, $2, $iif($var(%w.hashalgo. $+ $3), $v1, $iif($var(%w.hashalgo), $v1, sha256)))
+  if (%algo == md5) {
+    if ($version >= 6.03) { return $md5($1) }
     if (!$exists($nofile($script) $+ /md5.dll)) { 
       echo 4 -a You need to place md5.dll in $nofile($script) for this to work.
       halt
     }
     return $dll($nofile($script) $+ /md5.dll,md5,$1)
   }
+  if ($version >= 7.46) { return $sha256($1) }
+  echo 4 -a SHA256 requires mIRC 7.46+. Try /setauth ... md5 for old mIRC.
+  halt
 }
 
 ALIAS auth { 
@@ -133,7 +134,7 @@ ALIAS auth {
     echo 8 -a botname is optional. 
   }
   else {
-    echo +Auth $wmd5($2 $+ $wsecpass($3) $+ $wauthkey($3))
+    echo +Auth $whash($2 $+ $wsecpass($3) $+ $wauthkey($3), , $3)
   }
 }
 ALIAS msg { 
