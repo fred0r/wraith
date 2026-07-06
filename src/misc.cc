@@ -221,7 +221,7 @@ char *newsplit(char **rest, char delim, bool trim)
  * there is no nick.
  * '!' as a nick/user separator must precede any '@' characters.
  * Otherwise it will be considered a part of the host.
- * Supported types are listed in tcl-commands.doc in the maskhost
+ * Supported types are listed in the maskhost
  * command section. Type 3 resembles the older maskhost() most closely.
  *
  * Specific examples (with type=3):

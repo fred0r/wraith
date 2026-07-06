@@ -130,7 +130,7 @@ static int gotfake433(char *nick)
   return 0;
 }
 
-/* Check for tcl-bound msg command, return 1 if found
+/* Check for bound msg command, return 1 if found
  *
  * msg: proc-name <nick> <user@host> <handle> <args...>
  */
@@ -620,9 +620,7 @@ static bool detect_flood(const char *floodnick, const char *floodhost,
     lastmsgs[which] = 0;
     lastmsgtime[which] = 0;
     lastmsghost[which][0] = 0;
-#ifdef TCL
     u = get_user_by_host(from);
-#endif
     /* Private msg */
     simple_snprintf(h, sizeof(h), "*!*@%s", p);
     putlog(LOG_MISC, "*", "Flood from @%s!  Placing on ignore!", p);

@@ -24,7 +24,7 @@
  *   maintaining the server list
  *   timers, utimers
  *   telling the current programmed settings
- *   initializing a lot of stuff and loading the tcl scripts
+ *   initializing a lot of stuff
  *
  */
 

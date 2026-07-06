@@ -19,7 +19,7 @@
  */
 
 /*
- * tclchan.c -- part of channels.mod
+ * channelsmisc.c -- part of channels.mod
  *
  */
 

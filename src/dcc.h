@@ -150,8 +150,8 @@ struct dupwait_info {
 #define DCT_SHOWWHO   BIT2        /* show the user in .who            */
 #define DCT_REMOTEWHO BIT3        /* show in remote who               */
 #define DCT_VALIDIDX  BIT4        /* valid idx for outputting to
-                                           in tcl                           */
-#define DCT_SIMUL     BIT5        /* can be tcl_simul'd               */
+                                           scripting                          */
+#define DCT_SIMUL     BIT5        /* can be simul'd                   */
 #define DCT_CANBOOT   BIT6        /* can be booted                    */
 #define DCT_          BIT7        /* unused */
 #define DCT_FORKTYPE  BIT8        /* a forking type                   */

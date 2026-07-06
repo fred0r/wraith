@@ -568,7 +568,7 @@ void backup_userfile()
  * *ignore global ignores
  * ::#chan channel bans
  * - entries in each
- * + denotes tcl command
+ * + denotes command
  * <handle> begin user entry
  * --KEY INFO - info on each
  * NEWER:

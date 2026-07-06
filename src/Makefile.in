@@ -45,7 +45,6 @@ OBJS = auth.So \
 	garble.So \
 	libcrypto.So \
 	libssl.So \
-	libtcl.So \
 	log.So \
 	main.So \
 	match.So \

@@ -3200,9 +3200,7 @@ static int gotquit(char *from, char *msg)
   struct userrec *u = NULL;
 
   strlcpy(from2, from, sizeof(from2));
-#ifdef TCL
   u = get_user_by_host(from2);
-#endif
   nick = splitnick(&from);
   fixcolon(msg);
   /* Fred1: Instead of expensive wild_match on signoff, quicker method.
@@ -3244,7 +3242,7 @@ static int gotquit(char *from, char *msg)
           chan->role_rebalance_cookie = 0;
         }
         set_handle_laston(chan->dname, u, now); /* If you remove this, the bot will crash when the user record in question
-						   is removed/modified during the tcl binds below, and the users was on more
+						   is removed/modified during the binds below, and the users was on more
 						   than one monitored channel */
       }
       if (split) {

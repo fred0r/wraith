@@ -1866,7 +1866,7 @@ See also: slowpart, chanset, chaninfo
    memory being used by the userfile. The second line tells you the uptime of
    the bot, CPU time, and cache hit. The third shows the bot's admin, and the
    forth shows its current config file. The fifth line shows what operating
-   system the bot is running on. The next two lines show Tcl information. If
+   system the bot is running on. The next two lines show information. If
    debug mode is enabled, additional info may be shown. Sharing information
    will also be shown if it's being used.
  
@@ -1932,9 +1932,6 @@ See also: die, conf, botcmd
     -Users will not see channels that are +s or +p unless they have op access there
  
 See also: find
-::tcl
-###  $btcl$b script
-   Executes the given string and returns the result.
 :leaf:topic
 ###  $btopic$b [channel] [new topic]
    Changes the channel's topic, assuming the bot is a chanop or the

@@ -37,7 +37,7 @@ DIFF = @DIFF@
 
 #LIBS = @LIBS@
 LIBS = @LIBS@
-INCLUDES = @TCL_INCLUDES@ @SSL_INCLUDES@
+INCLUDES = @SSL_INCLUDES@
 
 DEBCXXFLAGS = -DDEBUG -fno-inline -g3 -ggdb3 -fno-omit-frame-pointer -fno-optimize-sibling-calls -Wshadow -Wpointer-arith @GCC3DEB@ @GCC4DEB@ @DEBCXXFLAGS@
 DEBLDFLAGS= @DEBLDFLAGS@
@@ -133,9 +133,9 @@ sort: sorthelp
 sorthelp: src/sorthelp.cc
 	+@cd src && ${MAKE_UTILS} sorthelp
 
-libdefs: src/.defs/libcrypto_post.h src/.defs/libssl_post.h src/.defs/libtcl_post.h \
-	 src/.defs/libcrypto_pre.h src/.defs/libssl_pre.h src/.defs/libtcl_pre.h \
-	 src/.defs/libcrypto_exports src/.defs/libssl_exports src/.defs/libtcl_exports
+libdefs: src/.defs/libcrypto_post.h src/.defs/libssl_post.h \
+	 src/.defs/libcrypto_pre.h src/.defs/libssl_pre.h \
+	 src/.defs/libcrypto_exports src/.defs/libssl_exports
 src/.defs/libcrypto_post.h src/.defs/libcrypto_pre.h src/.defs/libcrypto_exports: src/.defs/libcrypto_gen.stamp
 src/.defs/libcrypto_gen.stamp: src/libcrypto.cc \
 	src/generate_defs.sh src/generate_symbol.sh src/dl.h
@@ -148,14 +148,8 @@ src/.defs/libssl_gen.stamp: src/libssl.cc \
 	@CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" INCLUDES="$(INCLUDES)" \
            SED="sed" src/generate_defs.sh src/libssl.cc || exit 1
 	@touch $@
-src/.defs/libtcl_post.h src/.defs/libtcl_pre.h src/.defs/libtcl_exports: src/.defs/libtcl_gen.stamp
-src/.defs/libtcl_gen.stamp: src/libtcl.cc \
-	src/generate_defs.sh src/generate_symbol.sh src/dl.h
-	@CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" INCLUDES="$(INCLUDES)" \
-           SED="sed" src/generate_defs.sh src/libtcl.cc || exit 1
-	@touch $@
 src/.defs/exports: Makefile \
-	src/.defs/libcrypto_gen.stamp src/.defs/libssl_gen.stamp src/.defs/libtcl_gen.stamp
+	src/.defs/libcrypto_gen.stamp src/.defs/libssl_gen.stamp
 	@echo "Generating $@"
 	@{ \
 		echo "{"; \
