@@ -79,11 +79,12 @@ static void update_ufno(int idx, char *par)
 static void update_ufyes(int idx, char *par)
 {
   if (dcc[idx].status & STAT_OFFEREDU) {
-    // Disable update streaming until it is deemed necesary - way too slow currently
-    if (0 && strstr(par, "stream")) {
-      start_sending_binary(idx, 1);
+    int snum = findanysnum(dcc[idx].sock);
+    if (snum >= 0 && socklist[snum].enclink >= 0 &&
+        enclink[socklist[snum].enclink].type == LINK_CHACHA20_POLY1305) {
+      start_sending_binary(idx, 1);  /* encrypted stream via botlink */
     } else {
-      start_sending_binary(idx, 0);
+      start_sending_binary(idx, 0);  /* plain DCC for legacy v1.4.x */
     }
   }
 }

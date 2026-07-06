@@ -1,4 +1,4 @@
-/* aes_util.c
+/* aes_util.cc
  *
  */
 
@@ -10,124 +10,109 @@
 #define CRYPT_KEYBITS 256
 #define CRYPT_KEYSIZE (CRYPT_KEYBITS >> 3)
 
-AES_KEY e_key, d_key;
-
-/**
- * @brief Encrypt a string with AES 256 ECB
- * @param key The key to encrypt with
- * @param data The string to encrypt
- * @return A new, encrypted string
- */
-bd::String encrypt_string(const bd::String& key, const bd::String& data) {
-  if (!key) return data;
-  size_t len = data.length();
-  char *bdata = (char*) aes_encrypt_ecb_binary(key.c_str(), (unsigned char*) data.c_str(), &len);
-  bd::String encrypted(bdata, len);
-  free(bdata);
-  return encrypted;
+/* AesCipher class implementation */
+AesCipher::AesCipher(const std::string& key)
+{
+  if (!key.empty()) {
+    AES_set_encrypt_key((const unsigned char *)key.c_str(), CRYPT_KEYBITS, &enc_key_);
+    AES_set_decrypt_key((const unsigned char *)key.c_str(), CRYPT_KEYBITS, &dec_key_);
+  } else {
+    memset(&enc_key_, 0, sizeof(enc_key_));
+    memset(&dec_key_, 0, sizeof(dec_key_));
+  }
 }
 
-/**
- * @brief Encrypt a string with AES 256 CBC
- * @param key The key to encrypt with
- * @param data The string to encrypt
- * @param IV The IV to use (WARNING: This is modified inplace)
- * @return A new, encrypted string
- */
-bd::String encrypt_string_cbc(const bd::String& key, bd::String data, bd::String IV) {
-  if (!key) return data;
+AesCipher::~AesCipher()
+{
+  OPENSSL_cleanse(&enc_key_, sizeof(enc_key_));
+  OPENSSL_cleanse(&dec_key_, sizeof(dec_key_));
+}
 
-  // Add padding
+std::string AesCipher::encrypt_ecb(const std::string& data) const
+{
+  size_t len = data.length();
+  unsigned char *out = encrypt_ecb_raw((const unsigned char *)data.c_str(), &len);
+  std::string result((const char *)out, len);
+  OPENSSL_cleanse(out, len);
+  free(out);
+  return result;
+}
+
+std::string AesCipher::decrypt_ecb(const std::string& data) const
+{
+  size_t len = data.length();
+  unsigned char *out = decrypt_ecb_raw((const unsigned char *)data.c_str(), &len);
+  std::string result((const char *)out, len);
+  OPENSSL_cleanse(out, len);
+  free(out);
+  return result;
+}
+
+std::string AesCipher::encrypt_cbc(const std::string& data, std::string iv) const
+{
+  /* Make a mutable copy for CBC (IV is modified in-place) */
+  std::string padded_data = data;
   size_t padding = CRYPT_BLOCKSIZE;
-  if (data.length() % CRYPT_BLOCKSIZE)
-    padding = (CRYPT_BLOCKSIZE - (data.length() % CRYPT_BLOCKSIZE));
-  // Pad with padding bytes of padding
-  data.resize(data.length() + padding, padding);
+  if (padded_data.length() % CRYPT_BLOCKSIZE)
+    padding = (CRYPT_BLOCKSIZE - (padded_data.length() % CRYPT_BLOCKSIZE));
+  padded_data.append(padding, (char)padding);
 
-  AES_set_encrypt_key((const unsigned char *) key.c_str(), CRYPT_KEYBITS, &e_key);
-  AES_cbc_encrypt((const unsigned char*)data.cbegin(), (unsigned char*)data.begin(), data.length(), &e_key, (unsigned char*)IV.begin(), AES_ENCRYPT);
-  OPENSSL_cleanse(&e_key, sizeof(e_key));
+  unsigned char *out = (unsigned char *)calloc(1, padded_data.length());
+  memcpy(out, padded_data.c_str(), padded_data.length());
+  AES_cbc_encrypt(out, out, padded_data.length(), &enc_key_, (unsigned char *)iv.c_str(), AES_ENCRYPT);
 
-  return data;
+  std::string result((const char *)out, padded_data.length());
+  OPENSSL_cleanse(out, padded_data.length());
+  free(out);
+  return result;
 }
 
-/**
- * @brief Decrypt an AES 256 ECB ciphered string
- * @param key The key to decrypt with
- * @param data The string to decrypt
- * @return A new, decrypted string
- */
-bd::String decrypt_string(const bd::String& key, const bd::String& data) {
-  if (!key) return data;
-  size_t len = data.length();
-  char *bdata = (char*) aes_decrypt_ecb_binary(key.c_str(), (unsigned char*) data.c_str(), &len);
-  bd::String decrypted(bdata, len);
-  OPENSSL_cleanse(bdata, len);
-  free(bdata);
-  return decrypted;
-}
+std::string AesCipher::decrypt_cbc(const std::string& data, std::string iv) const
+{
+  std::string result = data;
+  unsigned char *buf = (unsigned char *)calloc(1, result.length());
+  memcpy(buf, result.c_str(), result.length());
 
-/**
- * @brief Decrypt anAES 256 CBC ciphered string
- * @param key The key to decrypt with
- * @param data The string to decrypt
- * @param IV The IV to use (WARNING: This is modified inplace)
- * @return A new, decrypted string
- */
-bd::String decrypt_string_cbc(const bd::String& key, bd::String data, bd::String IV) {
-  if (!key) return data;
+  AES_cbc_encrypt(buf, buf, result.length(), &dec_key_, (unsigned char *)iv.c_str(), AES_DECRYPT);
 
-  data.resize(data.length() - (data.length() % CRYPT_BLOCKSIZE));
-  AES_set_decrypt_key((const unsigned char *) key.c_str(), CRYPT_KEYBITS, &d_key);
-  AES_cbc_encrypt((const unsigned char*)data.cbegin(), (unsigned char*)data.begin(), data.length(), &d_key, (unsigned char*)IV.begin(), AES_DECRYPT);
-  OPENSSL_cleanse(&d_key, sizeof(d_key));
-
-  // How much padding?
-  size_t padding = data[data.length() - 1];
-
-  if (!padding || padding > 16)
-    data.resize(strlen((char*) data.c_str()));
+  /* Remove PKCS padding */
+  size_t len = result.length();
+  size_t padding = buf[len - 1];
+  if (!padding || padding > CRYPT_BLOCKSIZE)
+    len = strlen((char *)buf);
   else
-    data.resize(data.length() - padding);
-  return data;
+    len -= padding;
+
+  result.assign((const char *)buf, len);
+  OPENSSL_cleanse(buf, result.length());
+  free(buf);
+  return result;
 }
 
 unsigned char *
-aes_encrypt_ecb_binary(const char *keydata, unsigned char *in, size_t *inlen)
+AesCipher::encrypt_ecb_raw(const unsigned char *in, size_t *inlen) const
 {
   size_t len = *inlen;
   int blocks = 0, block = 0;
   unsigned char *out = NULL;
 
-  /* First pad indata to CRYPT_BLOCKSIZE multiple */
-  if (len % CRYPT_BLOCKSIZE)             /* more than 1 block? */
+  if (len % CRYPT_BLOCKSIZE)
     len += (CRYPT_BLOCKSIZE - (len % CRYPT_BLOCKSIZE));
 
   out = (unsigned char *) calloc(1, len + 1);
   memcpy(out, in, *inlen);
   *inlen = len;
 
-  if (!keydata || !*keydata) {
-    /* No key, no encryption */
-    memcpy(out, in, len);
-  } else {
-    char key[CRYPT_KEYSIZE + 1] = "";
+  blocks = len / CRYPT_BLOCKSIZE;
+  for (block = blocks - 1; block >= 0; --block)
+    AES_encrypt(&out[block * CRYPT_BLOCKSIZE], &out[block * CRYPT_BLOCKSIZE], &enc_key_);
 
-    strlcpy(key, keydata, sizeof(key));
-    AES_set_encrypt_key((const unsigned char *) key, CRYPT_KEYBITS, &e_key);
-    /* Now loop through the blocks and crypt them */
-    blocks = len / CRYPT_BLOCKSIZE;
-    for (block = blocks - 1; block >= 0; --block)
-      AES_encrypt(&out[block * CRYPT_BLOCKSIZE], &out[block * CRYPT_BLOCKSIZE], &e_key);
-    OPENSSL_cleanse(key, sizeof(key));
-    OPENSSL_cleanse(&e_key, sizeof(e_key));
-  }
   out[len] = 0;
   return out;
 }
 
 unsigned char *
-aes_decrypt_ecb_binary(const char *keydata, unsigned char *in, size_t *len)
+AesCipher::decrypt_ecb_raw(const unsigned char *in, size_t *len) const
 {
   int blocks = 0, block = 0;
   unsigned char *out = NULL;
@@ -136,22 +121,9 @@ aes_decrypt_ecb_binary(const char *keydata, unsigned char *in, size_t *len)
   out = (unsigned char *) calloc(1, *len + 1);
   memcpy(out, in, *len);
 
-  if (!keydata || !*keydata) {
-    /* No key, no decryption */
-  } else {
-    /* Init/fetch key */
-    char key[CRYPT_KEYSIZE + 1] = "";
-
-    strlcpy(key, keydata, sizeof(key));
-    AES_set_decrypt_key((const unsigned char *) key, CRYPT_KEYBITS, &d_key);
-    /* Now loop through the blocks and decrypt them */
-    blocks = *len / CRYPT_BLOCKSIZE;
-
-    for (block = blocks - 1; block >= 0; --block)
-      AES_decrypt(&out[block * CRYPT_BLOCKSIZE], &out[block * CRYPT_BLOCKSIZE], &d_key);
-    OPENSSL_cleanse(key, sizeof(key));
-    OPENSSL_cleanse(&d_key, sizeof(d_key));
-  }
+  blocks = *len / CRYPT_BLOCKSIZE;
+  for (block = blocks - 1; block >= 0; --block)
+    AES_decrypt(&out[block * CRYPT_BLOCKSIZE], &out[block * CRYPT_BLOCKSIZE], &dec_key_);
 
   *len = strlen((char*) out);
   out[*len] = 0;
@@ -159,14 +131,13 @@ aes_decrypt_ecb_binary(const char *keydata, unsigned char *in, size_t *len)
 }
 
 unsigned char *
-aes_encrypt_cbc_binary(const char *keydata, unsigned char *in, size_t *inlen, unsigned char *ivec)
+AesCipher::encrypt_cbc_raw(const unsigned char *in, size_t *inlen, unsigned char *ivec) const
 {
   size_t len = *inlen;
   unsigned char *out = NULL;
 
-  /* First pad indata to CRYPT_BLOCKSIZE multiple */
   size_t padding = 16;
-  if (len % CRYPT_BLOCKSIZE)              /* more than 1 block? */
+  if (len % CRYPT_BLOCKSIZE)
     padding = (CRYPT_BLOCKSIZE - (len % CRYPT_BLOCKSIZE));
   len += padding;
 
@@ -175,23 +146,12 @@ aes_encrypt_cbc_binary(const char *keydata, unsigned char *in, size_t *inlen, un
   memcpy(out, in, *inlen);
   *inlen = len;
 
-  if (!keydata || !*keydata) {
-    /* No key, no encryption */
-    memcpy(out, in, len);
-  } else {
-    char key[CRYPT_KEYSIZE + 1] = "";
-
-    strlcpy(key, keydata, sizeof(key));
-    AES_set_encrypt_key((const unsigned char *) key, CRYPT_KEYBITS, &e_key);
-    AES_cbc_encrypt(out, out, len, &e_key, ivec, AES_ENCRYPT);
-    OPENSSL_cleanse(key, sizeof(key));
-    OPENSSL_cleanse(&e_key, sizeof(e_key));
-  }
+  AES_cbc_encrypt(out, out, len, &enc_key_, ivec, AES_ENCRYPT);
   return out;
 }
 
 unsigned char *
-aes_decrypt_cbc_binary(const char *keydata, unsigned char *in, size_t *len, unsigned char* ivec)
+AesCipher::decrypt_cbc_raw(const unsigned char *in, size_t *len, unsigned char *ivec) const
 {
   unsigned char *out = NULL;
 
@@ -199,22 +159,9 @@ aes_decrypt_cbc_binary(const char *keydata, unsigned char *in, size_t *len, unsi
   out = (unsigned char *) calloc(1, *len + 1);
   memcpy(out, in, *len);
 
-  if (!keydata || !*keydata) {
-    /* No key, no decryption */
-  } else {
-    /* Init/fetch key */
-    char key[CRYPT_KEYSIZE + 1] = "";
+  AES_cbc_encrypt(out, out, *len, &dec_key_, ivec, AES_DECRYPT);
 
-    strlcpy(key, keydata, sizeof(key));
-    AES_set_decrypt_key((const unsigned char *) key, CRYPT_KEYBITS, &d_key);
-    AES_cbc_encrypt(out, out, *len, &d_key, ivec, AES_DECRYPT);
-    OPENSSL_cleanse(key, sizeof(key));
-    OPENSSL_cleanse(&d_key, sizeof(d_key));
-  }
-
-  // How much padding?
   size_t padding = out[*len - 1];
-
   if (!padding)
     *len = strlen((char*) out);
   else
@@ -222,4 +169,92 @@ aes_decrypt_cbc_binary(const char *keydata, unsigned char *in, size_t *len, unsi
 
   return out;
 }
+
+/* C API wrappers */
+bd::String encrypt_string(const bd::String& key, const bd::String& data) {
+  if (!key) return data;
+  AesCipher cipher{std::string(key.c_str(), key.length())};
+  return bd::String(cipher.encrypt_ecb(std::string(data.c_str(), data.length())).c_str());
+}
+
+bd::String encrypt_string_cbc(const bd::String& key, bd::String data, bd::String IV) {
+  if (!key) return data;
+  AesCipher cipher{std::string(key.c_str(), key.length())};
+  std::string result = cipher.encrypt_cbc(
+    std::string(data.c_str(), data.length()),
+    std::string(IV.c_str(), IV.length())
+  );
+  return bd::String(result.c_str(), result.length());
+}
+
+bd::String decrypt_string(const bd::String& key, const bd::String& data) {
+  if (!key) return data;
+  AesCipher cipher{std::string(key.c_str(), key.length())};
+  return bd::String(cipher.decrypt_ecb(std::string(data.c_str(), data.length())).c_str());
+}
+
+bd::String decrypt_string_cbc(const bd::String& key, bd::String data, bd::String IV) {
+  if (!key) return data;
+  AesCipher cipher{std::string(key.c_str(), key.length())};
+  std::string result = cipher.decrypt_cbc(
+    std::string(data.c_str(), data.length()),
+    std::string(IV.c_str(), IV.length())
+  );
+  return bd::String(result.c_str(), result.length());
+}
+
+unsigned char *
+aes_encrypt_ecb_binary(const char *keydata, unsigned char *in, size_t *inlen)
+{
+  if (!keydata || !*keydata) {
+    unsigned char *out = (unsigned char *) calloc(1, *inlen + 1);
+    memcpy(out, in, *inlen);
+    return out;
+  }
+  AesCipher cipher{std::string(keydata)};
+  return cipher.encrypt_ecb_raw(in, inlen);
+}
+
+unsigned char *
+aes_decrypt_ecb_binary(const char *keydata, unsigned char *in, size_t *len)
+{
+  if (!keydata || !*keydata) {
+    unsigned char *out = (unsigned char *) calloc(1, *len + 1);
+    memcpy(out, in, *len);
+    return out;
+  }
+  AesCipher cipher{std::string(keydata)};
+  return cipher.decrypt_ecb_raw(in, len);
+}
+
+unsigned char *
+aes_encrypt_cbc_binary(const char *keydata, unsigned char *in, size_t *inlen, unsigned char *ivec)
+{
+  if (!keydata || !*keydata) {
+    size_t len = *inlen;
+    size_t padding = 16;
+    if (len % CRYPT_BLOCKSIZE)
+      padding = (CRYPT_BLOCKSIZE - (len % CRYPT_BLOCKSIZE));
+    len += padding;
+    unsigned char *out = (unsigned char *) calloc(1, len);
+    memcpy(out, in, *inlen);
+    *inlen = len;
+    return out;
+  }
+  AesCipher cipher{std::string(keydata)};
+  return cipher.encrypt_cbc_raw(in, inlen, ivec);
+}
+
+unsigned char *
+aes_decrypt_cbc_binary(const char *keydata, unsigned char *in, size_t *len, unsigned char *ivec)
+{
+  if (!keydata || !*keydata) {
+    unsigned char *out = (unsigned char *) calloc(1, *len + 1);
+    memcpy(out, in, *len);
+    return out;
+  }
+  AesCipher cipher{std::string(keydata)};
+  return cipher.decrypt_cbc_raw(in, len, ivec);
+}
+
 /* vim: set sts=2 sw=2 ts=8 et: */

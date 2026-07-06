@@ -8,7 +8,39 @@
 #define CFLGS_UNDERLINE 	BIT2
 #define CFLGS_FLASH 		BIT3
 
+namespace wraith {
 
+enum class Color : int {
+	Black       = 1,
+	Blue        = 2,
+	Green       = 3,
+	Cyan        = 4,
+	Red         = 5,
+	Purple      = 6,
+	Brown       = 7,
+	LightGrey   = 8,
+	DarkGrey    = 9,
+	LightBlue   = 10,
+	LightGreen  = 11,
+	LightCyan   = 12,
+	LightRed    = 13,
+	LightPurple = 14,
+	Yellow      = 15,
+	White       = 16
+};
+
+enum class Format : int {
+	BoldOpen    = 1,
+	BoldClose   = 2,
+	UnderlineOpen  = 3,
+	UnderlineClose = 4,
+	FlashOpen   = 7,
+	FlashClose  = 8
+};
+
+} /* namespace wraith */
+
+/* Legacy #define constants for C API compatibility */
 #define C_BLACK                 1
 #define C_BLUE                  2
 #define C_GREEN                 3
@@ -33,6 +65,8 @@
 #define COLOR_CLOSE             6
 #define FLASH_OPEN              7
 #define FLASH_CLOSE             8
+
+/* Legacy macros - keep for backward compatibility */
 #define BLACK(idx) 		color(idx, COLOR_OPEN, C_BLACK)
 #define BLUE(idx) 		color(idx, COLOR_OPEN, C_BLUE)
 #define GREEN(idx) 		color(idx, COLOR_OPEN, C_GREEN)

@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include "base64.h"
 #include <bdlib/src/String.h>
+#include <bdlib/src/base64.h>
 
 static char *b64enc_bd(const unsigned char *data, size_t *len);
 static char *b64dec_bd(const unsigned char *data, size_t *len);
@@ -241,4 +242,39 @@ b64dec_bd(const unsigned char *data, size_t *len)
   b64dec_bd_buf(data, len, dest);
   return dest;
 }
+
+/* Base64 class implementations */
+bd::String Base64::encode(const bd::String& input)
+{
+  /* Use bdlib's standard base64 */
+  return bd::base64Encode(input);
+}
+
+bd::String Base64::decode(const bd::String& input)
+{
+  /* Use bdlib's standard base64 */
+  return bd::base64Decode(input);
+}
+
+bd::String Base64::encode_eggdrop(const bd::String& input)
+{
+  return broken_base64Encode(input);
+}
+
+bd::String Base64::decode_eggdrop(const bd::String& input)
+{
+  return broken_base64Decode(input);
+}
+
+std::string Base64::int_encode(unsigned int val)
+{
+  char *c_str = int_to_base64(val);
+  return std::string(c_str);
+}
+
+int Base64::int_decode(const std::string& encoded)
+{
+  return base64_to_int(encoded.c_str());
+}
+
 /* vim: set sts=2 sw=2 ts=8 et: */

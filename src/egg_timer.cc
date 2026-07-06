@@ -21,30 +21,30 @@
 
 #include <stdio.h> /* For NULL */
 #include <sys/time.h> /* For gettimeofday() */
+#include <list>
+#include <memory>
 #include "common.h"
 
 #include "egg_timer.h"
 
-typedef int (*TimerFunc) (void *);
+/* Timer class implementation */
+Timer::Timer(const char* name, int id, void* callback, void* client_data, int flags)
+	: id_(id), callback_(callback), client_data_(client_data), flags_(flags), called_(0)
+{
+	if (name) name_ = name;
+	memset(&howlong_, 0, sizeof(howlong_));
+	memset(&trigger_time_, 0, sizeof(trigger_time_));
+}
+
+Timer::~Timer() {
+}
 
 /* From main.c */
 static egg_timeval_t now;
 
-/* Internal use only. */
-typedef struct egg_timer_b {
-	struct egg_timer_b *next;
-	int id;
-	char *name;
-        TimerFunc callback;
-	void *client_data;
-	egg_timeval_t howlong;
-	egg_timeval_t trigger_time;
-	int flags;
-	int called;
-} egg_timer_t;
-
-/* We keep a sorted list of active timers. */
-static egg_timer_t *timer_repeat_head = NULL, *timer_once_head = NULL;
+/* Internal timer lists */
+static std::list<std::unique_ptr<Timer>> timer_repeat_list;
+static std::list<std::unique_ptr<Timer>> timer_once_list;
 static int timer_next_id = 1;
 
 /* Based on TclpGetTime from Tcl 8.3.3 */
@@ -116,27 +116,18 @@ long timeval_diff(const egg_timeval_t *tv1, const egg_timeval_t *tv2)
 	return usecs;
 }
 
-static int timer_add_to_list(egg_timer_t* &timer_list, egg_timer_t *timer)
+static void timer_add_to_list(std::list<std::unique_ptr<Timer>>& timer_list, std::unique_ptr<Timer> timer)
 {
-	egg_timer_t *prev = NULL, *ptr = NULL;
-
-	/* Find out where this should go in the list. */
-	for (ptr = timer_list; ptr; ptr = ptr->next) {
-		if (timer->trigger_time.sec < ptr->trigger_time.sec) break;
-		if (timer->trigger_time.sec == ptr->trigger_time.sec && timer->trigger_time.usec < ptr->trigger_time.usec) break;
-		prev = ptr;
+	auto it = timer_list.begin();
+	while (it != timer_list.end()) {
+		if (timer->trigger_time().sec < (*it)->trigger_time().sec ||
+		    (timer->trigger_time().sec == (*it)->trigger_time().sec &&
+		     timer->trigger_time().usec < (*it)->trigger_time().usec)) {
+			break;
+		}
+		++it;
 	}
-
-	/* Insert into timer list. */
-	if (prev) {
-		timer->next = prev->next;
-		prev->next = timer;
-	}
-	else {
-		timer->next = timer_list;
-		timer_list = timer;
-	}
-	return(0);
+	timer_list.insert(it, std::move(timer));
 }
 
 int timer_create_secs(int secs, const char *name, Function callback)
@@ -151,172 +142,126 @@ int timer_create_secs(int secs, const char *name, Function callback)
 
 int timer_create_complex(egg_timeval_t *howlong, const char *name, Function callback, void *client_data, int flags)
 {
-	egg_timer_t *timer = NULL;
+	int id = timer_next_id++;
+	auto timer = std::make_unique<Timer>(name, id, (void*)callback, client_data, flags);
+	timer->set_howlong(howlong->sec, howlong->usec);
+	timer->update_trigger(now.sec, now.usec);
 
-	/* Fill out a new timer. */
-	timer = (egg_timer_t *) calloc(1, sizeof(*timer));
-	timer->id = timer_next_id++;
-	if (name) timer->name = strdup(name);
-	else timer->name = NULL;
-	timer->callback = (TimerFunc) callback;
-	timer->client_data = client_data;
-	timer->flags = flags;
-	timer->howlong.sec = howlong->sec;
-	timer->howlong.usec = howlong->usec;
-	timer->trigger_time.sec = now.sec + howlong->sec;
-	timer->trigger_time.usec = now.usec + howlong->usec;
-	timer->called = 0;
-
-	if (timer->flags & TIMER_REPEAT)
-		timer_add_to_list(timer_repeat_head, timer);
+	if (timer->repeats())
+		timer_add_to_list(timer_repeat_list, std::move(timer));
 	else
-		timer_add_to_list(timer_once_head, timer);
+		timer_add_to_list(timer_once_list, std::move(timer));
 
-	return(timer->id);
+	return id;
 }
 
-static int timer_destroy_list(egg_timer_t* &timer_list, int timer_id)
+static bool timer_destroy_list(std::list<std::unique_ptr<Timer>>& timer_list, int timer_id)
 {
-	egg_timer_t *prev = NULL, *timer = NULL;
-
-	prev = NULL;
-	for (timer = timer_list; timer; timer = timer->next) {
-		if (timer->id == timer_id) break;
-		prev = timer;
+	for (auto it = timer_list.begin(); it != timer_list.end(); ++it) {
+		if ((*it)->id() == timer_id) {
+			timer_list.erase(it);
+			return true;
+		}
 	}
-
-	if (!timer) return(1); /* Not found! */
-
-	/* Unlink it. */
-	if (prev) prev->next = timer->next;
-	else timer_list = timer->next;
-
-	if (timer->name)
-		free(timer->name);
-	free(timer);
-	return(0);
+	return false;
 }
 
 /* Destroy a timer, given an id. */
 int timer_destroy(int timer_id)
 {
-	if (timer_destroy_list(timer_repeat_head, timer_id))
-		if (timer_destroy_list(timer_once_head, timer_id))
-			return 1;
-	return 0;
+	if (timer_destroy_list(timer_repeat_list, timer_id))
+		return 0;
+	if (timer_destroy_list(timer_once_list, timer_id))
+		return 0;
+	return 1;
 }
 
 #ifdef not_used
 int timer_destroy_all()
 {
-	egg_timer_t *timer = NULL, *next = NULL;
-
-	for (timer = timer_list_head; timer; timer = next) {
-		next = timer->next;
-	}
-	timer_list_head = NULL;
+	timer_repeat_list.clear();
+	timer_once_list.clear();
 	return(0);
 }
 #endif
 
 int timer_get_shortest(egg_timeval_t *howlong)
 {
-	egg_timer_t *timer = timer_repeat_head;
+	if (timer_repeat_list.empty()) return(1);
 
-	/* No timers? Boo. */
-	if (!timer) return(1);
-
-	timer_diff(&now, &timer->trigger_time, howlong);
+	auto& timer = timer_repeat_list.front();
+	timer_diff(&now, (egg_timeval_t*)&timer->trigger_time(), howlong);
 	return(0);
 }
 
-static bool process_timer(egg_timer_t* timer) {
-	TimerFunc callback = timer->callback;
-	void *client_data = timer->client_data;
-	bool deleted = 0;
+static bool process_timer(Timer& timer) {
+	auto callback = (int(*)(void*))timer.callback();
+	void *client_data = timer.client_data();
+	bool deleted = false;
 
-	if (timer->flags & TIMER_REPEAT) {
-		/* Update timer. */
-		/* This used to be '+= howlong.sec' but, if the time changed say 3 years (happened), this function
-		 * would end up executing all timers for 3 years until it is caught up.
-		 */
-		timer->trigger_time.sec = now.sec + timer->howlong.sec;
-		timer->trigger_time.usec = now.usec + timer->howlong.usec;
-
-		if (timer->trigger_time.usec >= 1000000) {
-			timer->trigger_time.usec -= 1000000;
-			++(timer->trigger_time.sec);
-		}
-
-		++(timer->called);
+	if (timer.repeats()) {
+		timer.update_trigger(now.sec, now.usec);
+		timer.inc_called();
 	} else {
-		deleted = 1;
+		deleted = true;
 	}
 
-	if (timer->name)
-		ContextNote("Timer", timer->name);
+	if (!timer.name().empty())
+		ContextNote("Timer", timer.name().c_str());
 
 	callback(client_data);
 	return deleted;
 }
 
-static void process_timer_list(egg_timer_t* &timer_list) {
-	egg_timer_t *timer = NULL, *prev = NULL, *next = timer_list;
-	while (next) {
-		timer = next;
-		// Timers are sorted by lowest->highest, so if the current one isn't ready to trigger, the rest are not either
-		if (timer->trigger_time.sec > now.sec || (timer->trigger_time.sec == now.sec && timer->trigger_time.usec > now.usec))
+static void process_timer_list(std::list<std::unique_ptr<Timer>>& timer_list) {
+	auto it = timer_list.begin();
+	while (it != timer_list.end()) {
+		auto& timer = *it;
+		if (timer->trigger_time().sec > now.sec ||
+		    (timer->trigger_time().sec == now.sec && timer->trigger_time().usec > now.usec))
 			break;
-		next = timer->next;
-		if (process_timer(timer)) {
-			// Deleted, need to shift the queue
-			if (prev) prev->next = timer->next;
-			else timer_list = timer->next;
-
-			if (timer->name)
-				free(timer->name);
-			free(timer);
-		} else
-			prev = timer;
+		auto next = std::next(it);
+		if (process_timer(*timer)) {
+			it = timer_list.erase(it);
+		} else {
+			it = next;
+		}
 	}
 }
 
 void timer_run()
 {
-	process_timer_list(timer_once_head);
-	process_timer_list(timer_repeat_head);
+	process_timer_list(timer_once_list);
+	process_timer_list(timer_repeat_list);
 }
 
 int timer_list(int **ids)
 {
-	egg_timer_t *timer = NULL;
 	int ntimers = 0;
 
-	/* Count timers. */
-	for (timer = timer_repeat_head; timer; timer = timer->next) ntimers++;
+	ntimers = static_cast<int>(timer_repeat_list.size());
 
 	/* Fill in array. */
 	*ids = (int *) calloc(1, sizeof(int) * (ntimers+1));
 	ntimers = 0;
-	for (timer = timer_repeat_head; timer; timer = timer->next) {
-		(*ids)[ntimers++] = timer->id;
+	for (auto& timer : timer_repeat_list) {
+		(*ids)[ntimers++] = timer->id();
 	}
 	return(ntimers);
 }
 
 int timer_info(int id, char **name, egg_timeval_t *initial_len, egg_timeval_t *trigger_time, int *called)
 {
-        egg_timer_t *timer = NULL;
-
-        for (timer = timer_repeat_head; timer; timer = timer->next) {
-                if (timer->id == id) break;
-        }
-        if (!timer) return(-1);
-	if (name) *name = timer->name;
-        if (initial_len) memcpy(initial_len, &timer->howlong, sizeof(*initial_len));
-        if (trigger_time) memcpy(trigger_time, &timer->trigger_time, sizeof(*trigger_time));
-	if (called) *called = timer->called;
-        return(0);
+	for (auto& t : timer_repeat_list) {
+		if (t->id() == id) {
+			if (name) *name = (char*)t->name().c_str();
+			if (initial_len) memcpy(initial_len, &t->howlong(), sizeof(*initial_len));
+			if (trigger_time) memcpy(trigger_time, &t->trigger_time(), sizeof(*trigger_time));
+			if (called) *called = t->called();
+			return 0;
+		}
+	}
+	return(-1);
 }
 
 /* vim: set sts=0 sw=8 ts=8 noet: */

@@ -1,5 +1,5 @@
 /*
- * garble.c -- handles:
+ * garble.cc -- handles:
  *   garble strings
  *
  */
@@ -15,8 +15,22 @@ static unsigned char *garble_buffer[GARBLE_BUFFERS] = {
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
-int garble_ptr = (-1);
+static int garble_ptr = (-1);
 
+std::string Garble::degarble(int len, const char *g)
+{
+  std::string result;
+  result.resize(len);
+  unsigned char x = 0xFF;
+  for (int i = 0; i < len; i++) {
+    result[i] = static_cast<char>(g[i] ^ x);
+    x = static_cast<unsigned char>(result[i]);
+  }
+  return result;
+}
+
+/* C API wrapper for stringfix-generated code and legacy callers.
+ * Uses rotating buffer since callers expect a persistent const char*. */
 const char *degarble(int len, const char *g)
 {
   unsigned char x = 0;

@@ -470,9 +470,7 @@ got005(char *from, char *msg)
     else if (!strcasecmp(tmp, "CASEMAPPING")) {
       /* we are default set to rfc1459, so only switch if NOT rfc1459 */
       if (strcasecmp(p, "rfc1459")) {
-        rfc_casecmp = strcasecmp;
-        rfc_ncasecmp = strncasecmp;
-        rfc_char_equal = char_equal;
+        active_case_mapping = &ascii_mapping;
       }
     }
   }

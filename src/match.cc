@@ -232,7 +232,7 @@ int _wild_match(const unsigned char *m, const unsigned char *n)
 }
 
 static inline int
-comp_with_mask(void *addr, void *dest, unsigned int mask)
+comp_with_mask(const unsigned char *addr, const unsigned char *dest, unsigned int mask)
 {
   int n = mask >> 3;
 
@@ -245,7 +245,7 @@ comp_with_mask(void *addr, void *dest, unsigned int mask)
 
     int m = ((~0U) << (8 - leftover));
 
-    if ((((unsigned char *) addr)[n] & m) == (((unsigned char *) dest)[n] & m))
+    if ((addr[n] & m) == (dest[n] & m))
       return (1);
   }
   return (0);
@@ -318,7 +318,7 @@ match_cidr(const char *m, const char *a)
       return 0;
     inet_pton(aftype, ip, &ipaddr.u.ipv6.sin6_addr);
     inet_pton(aftype, ipmask, &maskaddr.u.ipv6.sin6_addr);
-    if (comp_with_mask(&ipaddr.u.ipv6.sin6_addr.s6_addr, &maskaddr.u.ipv6.sin6_addr.s6_addr, cidrlen) && 
+    if (comp_with_mask((const unsigned char *)&ipaddr.u.ipv6.sin6_addr.s6_addr, (const unsigned char *)&maskaddr.u.ipv6.sin6_addr.s6_addr, cidrlen) && 
        ((ret = wild_match(mask, address))))
       return ret;
   } else if (aftype == AF_INET) {
@@ -327,13 +327,29 @@ match_cidr(const char *m, const char *a)
       return 0;
     inet_pton(aftype, ip, &ipaddr.u.ipv4.sin_addr);
     inet_pton(aftype, ipmask, &maskaddr.u.ipv4.sin_addr);
-    if (comp_with_mask(&ipaddr.u.ipv4.sin_addr.s_addr, &maskaddr.u.ipv4.sin_addr.s_addr, cidrlen) && 
+    if (comp_with_mask((const unsigned char *)&ipaddr.u.ipv4.sin_addr.s_addr, (const unsigned char *)&maskaddr.u.ipv4.sin_addr.s_addr, cidrlen) && 
        ((ret = wild_match(mask, address))))
       return ret;
 #ifdef USE_IPV6
   }
 #endif
   return 0;
+}
+
+/* WildcardMatcher class implementations */
+int wraith::WildcardMatcher::match_per(const std::string& pattern, const std::string& text)
+{
+  return _wild_match_per((const unsigned char *)pattern.c_str(), (const unsigned char *)text.c_str());
+}
+
+int wraith::WildcardMatcher::match(const std::string& pattern, const std::string& text)
+{
+  return _wild_match((const unsigned char *)pattern.c_str(), (const unsigned char *)text.c_str());
+}
+
+bool wraith::WildcardMatcher::match_cidr(const std::string& pattern, const std::string& address)
+{
+  return ::match_cidr(pattern.c_str(), address.c_str()) != 0;
 }
 
 /* vim: set sts=2 sw=2 ts=8 et: */

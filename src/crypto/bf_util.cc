@@ -1,4 +1,4 @@
-/* bf_util.c
+/* bf_util.cc
  *
  */
 
@@ -8,8 +8,6 @@
 #include <bdlib/src/base64.h>
 
 #define CRYPT_BLOCKSIZE BF_BLOCK
-
-BF_KEY bf_e_key, bf_d_key;
 
 static const char eggdrop_blowfish_base64[65] = "./0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 static const int eggdrop_blowfish_base64_index[256] = {
@@ -27,7 +25,6 @@ static const int eggdrop_blowfish_base64_index[256] = {
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
 };
 
@@ -39,29 +36,38 @@ union bf_data {
   BF_LONG bf_long;
 };
 
-/* These were adapted from eggdrop's blowfish.mod as well as dirtirc */
-
-/*
- * @brief Encrypt a string using eggdrop's blowfish
- * @param in The string to encrypt.
- * @param key The key to use.
- * @returns The encrypted string.
- */
-bd::String egg_bf_encrypt(bd::String in, const bd::String& key)
+/* BlowfishCipher class implementation */
+BlowfishCipher::BlowfishCipher(const bd::String& key)
 {
-  /* No key, no encryption */
-  if (!key.length()) return in;
+  if (key.length()) {
+    BF_set_key(&enc_key_, key.length(), reinterpret_cast<const unsigned char*>(key.cbegin()));
+    BF_set_key(&dec_key_, key.length(), reinterpret_cast<const unsigned char*>(key.cbegin()));
+  } else {
+    memset(&enc_key_, 0, sizeof(enc_key_));
+    memset(&dec_key_, 0, sizeof(dec_key_));
+  }
+}
 
+BlowfishCipher::~BlowfishCipher()
+{
+  OPENSSL_cleanse(&enc_key_, sizeof(enc_key_));
+  OPENSSL_cleanse(&dec_key_, sizeof(dec_key_));
+}
+
+bd::String BlowfishCipher::egg_encrypt(const bd::String& plaintext) const
+{
+  if (!plaintext.length()) return plaintext;
+
+  bd::String in(plaintext);
   size_t datalen = in.length();
   bd::String out(static_cast<size_t>(datalen * 1.5));
   if (datalen % 8 != 0) {
     datalen += 8 - (datalen % 8);
     in.resize(datalen, 0);
   }
-  BF_set_key(&bf_e_key, key.length(), (unsigned char *)key.cbegin());
   bf_data data;
   size_t part;
-  unsigned char *s = (unsigned char *)in.cbegin();
+  const unsigned char *s = reinterpret_cast<const unsigned char*>(in.cbegin());
   for (size_t i = 0; i < in.length(); i += 8) {
     data.lr.left = *s++ << 24;
     data.lr.left += *s++ << 16;
@@ -71,7 +77,7 @@ bd::String egg_bf_encrypt(bd::String in, const bd::String& key)
     data.lr.right += *s++ << 16;
     data.lr.right += *s++ << 8;
     data.lr.right += *s++;
-    BF_encrypt(&data.bf_long, &bf_e_key);
+    BF_encrypt(&data.bf_long, &enc_key_);
     for (part = 0; part < 6; part++) {
       out += eggdrop_blowfish_base64[data.lr.right & 0x3f];
       data.lr.right = data.lr.right >> 6;
@@ -84,14 +90,9 @@ bd::String egg_bf_encrypt(bd::String in, const bd::String& key)
   return out;
 }
 
-/*
- * @brief Decrypt a string using eggdrop's blowfish
- * @param in The string to decrypt.
- * @param key The key to use.
- * @returns The decrypted string if valid. The string passed in if no key is given. A truncated decrypted string in the case of error.
- */
-bd::String egg_bf_decrypt(bd::String in, const bd::String& key)
+bd::String BlowfishCipher::egg_decrypt(const bd::String& ciphertext) const
 {
+  bd::String in(ciphertext);
   // Skip over '+OK '
   if (in(0, 4) == "+OK ")
     in += static_cast<size_t>(4);
@@ -106,11 +107,10 @@ bd::String egg_bf_decrypt(bd::String in, const bd::String& key)
   if (cut_off > 0)
     in.resize(in.length() - cut_off);
 
-  BF_set_key(&bf_d_key, key.length(), (unsigned char *)key.cbegin());
   bf_data data;
   int val;
   size_t part;
-  char *s = (char *)in.cbegin();
+  const char *s = in.cbegin();
   for (size_t i = 0; i < in.length(); i += 12) {
     data.lr.left = 0;
     data.lr.right = 0;
@@ -122,17 +122,15 @@ bd::String egg_bf_decrypt(bd::String in, const bd::String& key)
       if ((val = eggdrop_blowfish_base64_index[int(*s++)]) == -1) return out;
       data.lr.left |= (char)val << part * 6;
     }
-    BF_decrypt(&data.bf_long, &bf_d_key);
+    BF_decrypt(&data.bf_long, &dec_key_);
     for (part = 0; part < 4; part++) {
       const char decrypted_char = char((data.lr.left & (0xff << ((3 - part) * 8))) >> ((3 - part) * 8));
-      // Don't write NULLs into the string
       if (decrypted_char) {
         out += decrypted_char;
       }
     }
     for (part = 0; part < 4; part++) {
       const char decrypted_char = char((data.lr.right & (0xff << ((3 - part) * 8))) >> ((3 - part) * 8));
-      // Don't write NULLs into the string
       if (decrypted_char) {
         out += decrypted_char;
       }
@@ -142,9 +140,9 @@ bd::String egg_bf_decrypt(bd::String in, const bd::String& key)
   return out;
 }
 
-bd::String fish_bf_cbc_encrypt(const bd::String& key, const bd::String& plaintext)
+bd::String BlowfishCipher::fish_encrypt(const bd::String& plaintext) const
 {
-  if (!key.length()) return plaintext;
+  if (!plaintext.length()) return plaintext;
 
   // Generate random 8-byte IV
   bd::String iv;
@@ -163,22 +161,20 @@ bd::String fish_bf_cbc_encrypt(const bd::String& key, const bd::String& plaintex
   bd::String out;
   out.resize(datalen);
   bd::String iv_copy(iv);
-  BF_set_key(&bf_e_key, key.length(), reinterpret_cast<const unsigned char*>(key.cbegin()));
   BF_cbc_encrypt(
       reinterpret_cast<const unsigned char*>(data.cbegin()),
       reinterpret_cast<unsigned char*>(out.begin()),
-      static_cast<long>(datalen), &bf_e_key,
+      static_cast<long>(datalen), &enc_key_,
       reinterpret_cast<unsigned char*>(iv_copy.begin()),
       BF_ENCRYPT
   );
-  OPENSSL_cleanse(&bf_e_key, sizeof(bf_e_key));
 
   return bd::base64Encode(iv + out);
 }
 
-bd::String fish_bf_cbc_decrypt(const bd::String& key, const bd::String& b64ciphertext)
+bd::String BlowfishCipher::fish_decrypt(const bd::String& b64ciphertext) const
 {
-  if (!key.length()) return b64ciphertext;
+  if (!b64ciphertext.length()) return b64ciphertext;
 
   bd::String decoded(bd::base64Decode(b64ciphertext));
 
@@ -196,15 +192,13 @@ bd::String fish_bf_cbc_decrypt(const bd::String& key, const bd::String& b64ciphe
 
   bd::String out;
   out.resize(cipherlen);
-  BF_set_key(&bf_d_key, key.length(), reinterpret_cast<const unsigned char*>(key.cbegin()));
   BF_cbc_encrypt(
       reinterpret_cast<const unsigned char*>(decoded.cbegin()) + BF_BLOCK,
       reinterpret_cast<unsigned char*>(out.begin()),
-      static_cast<long>(cipherlen), &bf_d_key,
+      static_cast<long>(cipherlen), &dec_key_,
       reinterpret_cast<unsigned char*>(iv.begin()),
       BF_DECRYPT
   );
-  OPENSSL_cleanse(&bf_d_key, sizeof(bf_d_key));
 
   // Trim trailing NUL padding bytes
   while (out.length() > 0 && out[out.length() - 1] == '\0')
@@ -213,108 +207,33 @@ bd::String fish_bf_cbc_decrypt(const bd::String& key, const bd::String& b64ciphe
   return out;
 }
 
-#ifdef not_needed
-unsigned char *
-bf_encrypt_ecb_binary(const char *keydata, unsigned char *in, size_t *inlen)
+/* C API wrappers */
+bd::String egg_bf_encrypt(bd::String in, const bd::String& key)
 {
-  size_t len = *inlen;
-  int blocks = 0, block = 0;
-  unsigned char *out = NULL;
-
-  /* First pad indata to CRYPT_BLOCKSIZE multiple */
-  if (len % CRYPT_BLOCKSIZE)             /* more than 1 block? */
-    len += (CRYPT_BLOCKSIZE - (len % CRYPT_BLOCKSIZE));
-
-  out = (unsigned char *) calloc(1, len + 1);
-  memcpy(out, in, *inlen);
-  *inlen = len;
-
-  if (!keydata || !*keydata) {
-    /* No key, no encryption */
-    memcpy(out, in, len);
-  } else {
-    BF_set_key(&bf_e_key, strlen(keydata), (const unsigned char*) keydata);
-    /* Now loop through the blocks and crypt them */
-    blocks = len / CRYPT_BLOCKSIZE;
-    for (block = blocks - 1; block >= 0; --block)
-      BF_ecb_encrypt(&out[block * CRYPT_BLOCKSIZE], &out[block * CRYPT_BLOCKSIZE], &bf_e_key, BF_ENCRYPT);
-    OPENSSL_cleanse(&bf_e_key, sizeof(bf_e_key));
-  }
-  out[len] = 0;
-  return out;
+  if (!key.length()) return in;
+  BlowfishCipher cipher(key);
+  return cipher.egg_encrypt(in);
 }
 
-unsigned char *
-bf_decrypt_ecb_binary(const char *keydata, unsigned char *in, size_t *len)
+bd::String egg_bf_decrypt(bd::String in, const bd::String& key)
 {
-  int blocks = 0, block = 0;
-  unsigned char *out = NULL;
-
-  *len -= *len % CRYPT_BLOCKSIZE;
-  out = (unsigned char *) calloc(1, *len + 1);
-  memcpy(out, in, *len);
-
-  if (!keydata || !*keydata) {
-    /* No key, no decryption */
-  } else {
-    BF_set_key(&bf_d_key, strlen(keydata), (const unsigned char*) keydata);
-    /* Now loop through the blocks and decrypt them */
-    blocks = *len / CRYPT_BLOCKSIZE;
-
-    for (block = blocks - 1; block >= 0; --block)
-      BF_ecb_encrypt(&out[block * CRYPT_BLOCKSIZE], &out[block * CRYPT_BLOCKSIZE], &bf_d_key, BF_DECRYPT);
-    OPENSSL_cleanse(&bf_d_key, sizeof(bf_d_key));
-  }
-
-  *len = strlen((char*) out);
-  out[*len] = 0;
-  return out;
+  if (!key.length()) return in;
+  BlowfishCipher cipher(key);
+  return cipher.egg_decrypt(in);
 }
 
-unsigned char *
-bf_encrypt_cbc_binary(const char *keydata, unsigned char *in, size_t *inlen, unsigned char *ivec)
+bd::String fish_bf_cbc_encrypt(const bd::String& key, const bd::String& plaintext)
 {
-  size_t len = *inlen;
-  unsigned char *out = NULL;
-
-  /* First pad indata to CRYPT_BLOCKSIZE multiple */
-  if (len % CRYPT_BLOCKSIZE)             /* more than 1 block? */
-    len += (CRYPT_BLOCKSIZE - (len % CRYPT_BLOCKSIZE));
-
-  out = (unsigned char *) calloc(1, len + 1);
-  *inlen = len;
-
-  if (!keydata || !*keydata) {
-    /* No key, no encryption */
-    memcpy(out, in, len);
-  } else {
-    BF_set_key(&bf_e_key, strlen(keydata), (const unsigned char*) keydata);
-    BF_cbc_encrypt(in, out, len, &bf_e_key, ivec, BF_ENCRYPT);
-    OPENSSL_cleanse(&bf_e_key, sizeof(bf_e_key));
-  }
-  out[len] = 0;
-  return out;
+  if (!key.length()) return plaintext;
+  BlowfishCipher cipher(key);
+  return cipher.fish_encrypt(plaintext);
 }
 
-unsigned char *
-bf_decrypt_cbc_binary(const char *keydata, unsigned char *in, size_t *len, unsigned char* ivec)
+bd::String fish_bf_cbc_decrypt(const bd::String& key, const bd::String& b64ciphertext)
 {
-  unsigned char *out = NULL;
-
-  *len -= *len % CRYPT_BLOCKSIZE;
-  out = (unsigned char *) calloc(1, *len + 1);
-
-  if (!keydata || !*keydata) {
-    /* No key, no decryption */
-  } else {
-    BF_set_key(&bf_d_key, strlen(keydata), (const unsigned char*) keydata);
-    BF_cbc_encrypt(in, out, *len, &bf_d_key, ivec, BF_DECRYPT);
-    OPENSSL_cleanse(&bf_d_key, sizeof(bf_d_key));
-  }
-
-  *len = strlen((char*) out);
-  out[*len] = 0;
-  return out;
+  if (!key.length()) return b64ciphertext;
+  BlowfishCipher cipher(key);
+  return cipher.fish_decrypt(b64ciphertext);
 }
-#endif
+
 /* vim: set sts=2 sw=2 ts=8 et: */
