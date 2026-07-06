@@ -1495,8 +1495,10 @@ raise_limit(struct chanset_t *chan, int default_limitraise)
 void check_shouldjoin(struct chanset_t* chan)
 {
   if ((channel_active(chan) || channel_pending(chan)) && !shouldjoin(chan)) {
-    sdprintf("Active/Pending in %s but I shouldn't be there, parting...", chan->dname);
-    dprintf(DP_SERVER, "PART %s\n", chan->name[0] ? chan->name : chan->dname);
+    if (!chan->channel.parttime) {
+      sdprintf("Active/Pending in %s but I shouldn't be there, parting in 5s...", chan->dname);
+      chan->channel.parttime = now + 5;
+    }
   } else if (shouldjoin(chan)) {
     join_chan(chan);
   }
