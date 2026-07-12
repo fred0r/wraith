@@ -1060,6 +1060,11 @@ void clear_channel(struct chanset_t *chan, bool reset)
   delete chan->channel.hashed_members;
   chan->channel.hashed_members = NULL;
 
+  if (chan->op_delegation_flush_timer) {
+    timer_destroy(chan->op_delegation_flush_timer);
+    chan->op_delegation_flush_timer = 0;
+  }
+
   if (reset)
     init_channel(chan, 1);
   for (size_t i = 0; i < MODES_PER_LINE_MAX; ++i) {

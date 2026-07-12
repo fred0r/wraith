@@ -1,6 +1,6 @@
 #.PHONY: default check_gmake debug static dynamic clean distclean test
 
-MAKE=env -u MAKELEVEL gmake ${MFLAGS}
+MAKE=env -u MAKELEVEL gmake
 
 TARGETS=	\
 		all \
@@ -18,4 +18,4 @@ ${target}: check_gmake .PHONY .SILENT
 .endfor
 
 check_gmake: .PHONY .SILENT
-	@which gmake > /dev/null 2>&1 || (echo "Please install gmake" && exit 0)
+	@which gmake > /dev/null 2>&1 || { echo "Error: gmake not found. Install gmake first."; exit 1; }

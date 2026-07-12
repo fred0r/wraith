@@ -71,6 +71,9 @@ for file in ${files}; do
   # Fix wrapped prototypes
   $SED -e :a -e N -e '$!ba' -e 's/,\n/,/g' "${TMPFILE}" > "${TMPFILE}.sed"
   mv "${TMPFILE}.sed" "${TMPFILE}"
+  # Strip __asm() directives from headers (NetBSD OpenSSL uses these for symbol renaming)
+  $SED -e 's/ *__asm([^)]*)//g' "${TMPFILE}" > "${TMPFILE}.sed"
+  mv "${TMPFILE}.sed" "${TMPFILE}"
   cd ..
 
   $SED -n -e 's/.*\(DLSYM_GLOBAL[^ (]*\)(.*, \([^)]*\).*/\2 \1/p' "${TMPFILE}" | \

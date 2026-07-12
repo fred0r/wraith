@@ -319,6 +319,10 @@ static void cmd_cmdpass(int idx, char *par)
   char *epass = NULL, tmp[256] = "";
 
   epass = salted_sha1(par[0] ? par : pass);
+  if (!epass) {
+    dprintf(idx, "Password too long (max 64 characters).\n");
+    return;
+  }
   simple_snprintf(tmp, sizeof tmp, "%s %s", cmd, epass);
   free(epass);
   if (has_pass)
@@ -521,7 +525,11 @@ static void cmd_newpass(int idx, char *par)
     pass = strdup(newpass);
   }
 
-  set_user(&USERENTRY_PASS, dcc[idx].user, pass);
+  if (!set_user(&USERENTRY_PASS, dcc[idx].user, pass)) {
+    dprintf(idx, "Password must be between 8 and 64 characters.\n");
+    free(pass);
+    return;
+  }
   dprintf(idx, "Changed your password to: %s\n", pass);
   if (conf.bot->hub)
     write_userfile(idx);
@@ -1326,7 +1334,11 @@ static void cmd_chpass(int idx, char *par)
       pass = strdup(newpass);
     }
 
-    set_user(&USERENTRY_PASS, u, pass);
+    if (!set_user(&USERENTRY_PASS, u, pass)) {
+      dprintf(idx, "Password for '%s' must be between 8 and 64 characters.\n", handle);
+      free(pass);
+      return;
+    }
     putlog(LOG_CMDS, "*", "#%s# chpass %s [%s]", dcc[idx].nick, handle, randpass ? "random" : "something");
     dprintf(idx, "Password for '%s' changed to: %s\n", handle, pass);
     write_userfile(idx);
@@ -2771,8 +2783,14 @@ static void cmd_chattr(int idx, char *par)
       }
     }
   }
-  if (chg && !conf.bot->hub)
+  if (chg && !conf.bot->hub) {
     check_this_user(hand, 0, NULL);
+    if ((of ^ u2->flags) & BOT_CHANHUB) {
+      chatout("*** %s is now a chathub (+c).\n", u2->handle);
+      if (ssl_use == 2)
+        chatout("*** Jump to an SSL server for auth/-g to work.\n");
+    }
+  }
   if (tmpchg)
     free(tmpchg);
   if (conf.bot->hub && save)
@@ -4246,8 +4264,8 @@ static void cmd_netlag(int idx, char * par) {
 
   putlog(LOG_CMDS, "*", "#%s# netlag", dcc[idx].nick);
   
-  timer_get_now(&tv);
-  simple_snprintf(tmp, sizeof(tmp), "ping %li", (long) ((tv.sec % 10000) * 100 + (tv.usec * 100) / (1000000)));
+  timer_update_now(&tv);
+  simple_snprintf(tmp, sizeof(tmp), "ping %li", (long) ((tv.sec % 10000) * 1000 + tv.usec / 1000));
   dprintf(idx, "Sent ping to all linked bots\n");
   botnet_send_cmd_broad(-1, conf.bot->nick, dcc[idx].nick, idx, tmp);
 }
@@ -4265,9 +4283,9 @@ static void rcmd_pong(const char *frombot, const char *fromhand, const char *fro
   if ((i >= 0) && (i < dcc_total) && (dcc[i].type == &DCC_CHAT) && (!strcmp(dcc[i].nick, fromhand))) {
     egg_timeval_t tv;
 
-    timer_get_now(&tv);
-    long tm = ((tv.sec % 10000) * 100 + (tv.usec * 100) / (1000000)) - atol(par);
-    dprintf(i, "Pong from %s: %d.%d seconds\n", frombot, (int)(tm / 100), (int)(tm % 100));
+    timer_update_now(&tv);
+    long tm = ((tv.sec % 10000) * 1000 + tv.usec / 1000) - atol(par);
+    dprintf(i, "Pong from %s: %ld.%02ld seconds\n", frombot, (long)(tm / 1000), (long)(tm % 1000));
   }
 }
 

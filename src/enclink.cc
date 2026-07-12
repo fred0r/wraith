@@ -77,9 +77,10 @@ static void ghost_link_case(int idx, direction_t direction)
     }
 
     /* initkey-gen */
-    /* salt1 salt2 port mynick conf.bot->nick */
+    /* salt1 salt2 port hubnick leafnick */
     char tmp[SALT1LEN + 1 + SALT2LEN + 1 + 4 + 1 + HANDLEN + 1 + HANDLEN + 1] = "";
     simple_snprintf(tmp, sizeof(tmp), STR("%s@%s@%4x@%s@%s"), salt1, salt2, port, strtoupper(nick1), strtoupper(nick2));
+
     free(nick1);
     free(nick2);
     strlcpy(keyp, SHA1(tmp), ENC_KEY_LEN + 1);
@@ -298,10 +299,8 @@ static void chacha20_poly1305_link_case(int idx, direction_t direction)
       make_rand_str(initkey, 32);
       socklist[snum].oseed = random();
       socklist[snum].iseed = socklist[snum].oseed;
-      {
-        bd::String encrypted = crypto::encrypt_chacha20_poly1305(salt2, initkey, "");
-        tmp2 = strdup(encrypted.c_str());
-      }
+      bd::String encrypted = crypto::encrypt_chacha20_poly1305(salt2, initkey, "");
+      tmp2 = strdup(encrypted.c_str());
       putlog(LOG_BOTS, "*", STR("Sending encrypted link handshake to %s..."), dcc[idx].nick);
 
       link_send(idx, STR("elink %s %d\n"), tmp2, socklist[snum].oseed);

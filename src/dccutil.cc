@@ -1142,6 +1142,10 @@ int check_cmd_pass(const char *cmd, char *pass)
         /* Successful match on the old version, convert it and save it */
         char ctmp[256] = "";
         epass = salted_sha1(pass);
+        if (!epass) {
+          free(epass);
+          return 0;
+        }
 
         simple_snprintf(ctmp, sizeof(ctmp), "%s %s", cmd, epass);
         free(epass);

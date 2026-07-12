@@ -1219,7 +1219,7 @@ void recheck_channel_modes(struct chanset_t *chan)
 static void check_this_member(struct chanset_t *chan, memberlist *m,
     struct flag_record *fr)
 {
-  if (!m || m->is_me || !me_op(chan))
+  if (!m || m->is_me || m->split || !me_op(chan))
     return;
 
   /* +d or bitch and not an op
@@ -1977,19 +1977,22 @@ static int got352or4(struct chanset_t *chan, char *user, char *host, char *nick,
   if (!m) {			/* Nope, so update */
     m = newmember(chan, nick);	/* Get a new channel entry */
     m->last = now;		/* Last time I saw him */
+  }
 
-    /* Store the userhost */
-    simple_snprintf(m->userhost, sizeof(m->userhost), "%s@%s", user, host);
-    simple_snprintf(m->from, sizeof(m->from), "%s!%s", m->nick, m->userhost);
-    member_update_from_cache(chan, m);
+  /* Update userhost for ALL members (new and existing). Previously this
+   * only ran for new members, causing stale userhosts when a cloak changed
+   * or the user reconnected. A stale opper->userhost in cookie_key()
+   * produces wrong decryption keys, which manifests as BC_SLACK. */
+  simple_snprintf(m->userhost, sizeof(m->userhost), "%s@%s", user, host);
+  simple_snprintf(m->from, sizeof(m->from), "%s!%s", m->nick, m->userhost);
+  member_update_from_cache(chan, m);
 
-    if (!m->userip[0]) {
-      if (ip)
-        simple_snprintf(m->userip, sizeof(m->userip), "%s@%s", user, ip);
-      else if (is_dotted_ip(host))
-        simple_snprintf(m->userip, sizeof(m->userip), "%s@%s", user, host);
-      simple_snprintf(m->fromip, sizeof(m->fromip), "%s!%s", m->nick, m->userip);
-    }
+  if (!m->userip[0]) {
+    if (ip)
+      simple_snprintf(m->userip, sizeof(m->userip), "%s@%s", user, ip);
+    else if (is_dotted_ip(host))
+      simple_snprintf(m->userip, sizeof(m->userip), "%s@%s", user, host);
+    simple_snprintf(m->fromip, sizeof(m->fromip), "%s!%s", m->nick, m->userip);
   }
 
 
@@ -2027,6 +2030,11 @@ static int got352or4(struct chanset_t *chan, char *user, char *host, char *nick,
 //    m->flags |= STOPWHO;
 
   member_getuser(m);
+
+  /* Check if any pending cookies are waiting for this nick's userhost update.
+   * This is called after userhost is updated, so the memberlist now has the
+   * fresh userhost for cookie verification retry. */
+  retry_pending_cookies_for_nick(chan, nick);
 
   //This bot is set +r, so resolve.
   if (unlikely(doresolv(chan))) {
@@ -2667,6 +2675,13 @@ static int got332(char *from, char *msg)
   return 0;
 }
 
+static void op_delegation_flush(void *data)
+{
+  struct chanset_t *chan = (struct chanset_t *)data;
+  chan->op_delegation_flush_timer = 0;
+  flush_mode(chan, QUICK);
+}
+
 /* Got a join
  */
 static int gotjoin(char *from, char *chname)
@@ -2720,7 +2735,7 @@ static int gotjoin(char *from, char *chname)
   strlcpy(uhost, from, sizeof(buf));
   nick = splitnick(&uhost);
 
-  if (!chan || (chan && !shouldjoin(chan))) {
+  if (!chan || (chan && !shouldjoin(chan) && !chan->channel.parttime)) {
     if (match_my_nick(nick)) {
       putlog(LOG_WARN, "*", "joined %s but didn't want to!", chname);
       dprintf(DP_MODE, "PART %s\n", chname);
@@ -2908,6 +2923,29 @@ static int gotjoin(char *from, char *chname)
                (op || 
                ((chan->role & ROLE_OP) && chk_autoop(m, fr, chan)))) {
             do_op(m, chan, 1, 0);
+          }
+          /* Bots excluded from chk_autoop; op them directly so they don't
+           * have to wait for the 10s check_expired_chanstuff cycle.
+           * Only the bot assigned ROLE_OP for this channel ops, to prevent
+           * all bots from sending +o simultaneously. */
+          if (!chan_hasop(m) && !chan_sentop(m) && is_bot(m->user) && chk_op(fr, chan) &&
+              (chan->role & ROLE_OP)) {
+            do_op(m, chan, 0, 0);
+          }
+          /* If we're leaving due to group change, op joining bots before we go.
+           * chk_autoop returns 0 for bots, so the autoop path above won't fire.
+           * Don't require bot_shouldjoin() here: the new-group bot may join before
+           * its groups variable has been synced to this bot. As long as it has op
+           * flags, give it op so the channel doesn't lose all ops when we part. */
+          if (!chan_hasop(m) && !chan_sentop(m) && chan->channel.parttime &&
+              is_bot(m->user) && chk_op(fr, chan) && (chan->role & ROLE_OP)) {
+            do_op(m, chan, 0, 0);
+            if (!chan->op_delegation_flush_timer) {
+              egg_timeval_t howlong = { 1, 0 };
+              chan->op_delegation_flush_timer =
+                  timer_create_complex(&howlong, "opdel_flush",
+                      (Function) op_delegation_flush, chan, 0);
+            }
           }
 
           /* +v or +voice */

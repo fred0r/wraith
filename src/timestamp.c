@@ -27,7 +27,7 @@ int main(int argc, char *argv[])
     const time_t tm = atol(argv[1]);
     char s[11] = "";
 
-    strftime(s, 11, "%m.%d.%Y", localtime(&tm));
+    strftime(s, 11, "%Y/%m/%d", localtime(&tm));
     printf("%s\n", s);
   } else {
     return 1;

@@ -218,6 +218,8 @@ static void eof_dcc_send(int idx)
        lostdcc(y);
       }
 */
+      dcc[y].status &= ~STAT_SENDINGU;
+      bupdating = 0;
       killsock(dcc[idx].sock);
       lostdcc(idx);
     }
@@ -377,7 +379,7 @@ static void dcc_get(int idx, char *buf, int len)
           break;
         }
       if (y >= 0) {
-	dcc[y].status &= ~STAT_SENDINGU;
+    dcc[y].status &= ~STAT_GETTINGU;
         dcc[y].status |= STAT_UPDATED;
       }
       putlog(LOG_BOTS, "*", "Completed binary file send to %s", dcc[y].nick);

@@ -516,7 +516,11 @@ void writecfg() {
     // Ensure the pass is salted-sha1
     const size_t ownerPassLength = ownerInfo.at(1).length();
     if (ownerPassLength != 40 && ownerPassLength != 47) {
-      ownerInfo[1] = bd::String(salted_sha1(ownerInfo.at(1).c_str()));
+      char *tmp = salted_sha1(ownerInfo.at(1).c_str());
+      if (tmp) {
+        ownerInfo[1] = bd::String(tmp);
+        free(tmp);
+      }
     }
     printf("OWNER %s\n", ownerInfo.join(" ").c_str());
   }
@@ -532,24 +536,90 @@ void writecfg() {
   printf("SALT2 %s\n", salt2);
 }
 
-static void edpack(settings_t *incfg, const char *in_hash, int what)
+static unsigned char *
+aes_encrypt_cbc_zero(const char *keydata, unsigned char *in, size_t *inlen, unsigned char *ivec)
+{
+  size_t len = *inlen;
+  if (len % 16)
+    len += 16 - (len % 16);
+  unsigned char *out = (unsigned char *) calloc(1, len);
+  memcpy(out, in, *inlen);
+  *inlen = len;
+
+  if (!keydata || !*keydata)
+    return out;
+
+  char key[33] = "";
+  strlcpy(key, keydata, sizeof(key));
+  AES_KEY e_key;
+  AES_set_encrypt_key((const unsigned char *) key, 256, &e_key);
+  AES_cbc_encrypt(out, out, len, &e_key, ivec, AES_ENCRYPT);
+  OPENSSL_cleanse(key, sizeof(key));
+  OPENSSL_cleanse(&e_key, sizeof(e_key));
+  return out;
+}
+
+static unsigned char *
+aes_decrypt_cbc_zero(const char *keydata, unsigned char *in, size_t *len, unsigned char *ivec)
+{
+  *len -= *len % 16;
+  unsigned char *out = (unsigned char *) calloc(1, *len + 1);
+  memcpy(out, in, *len);
+
+  if (!keydata || !*keydata) {
+    out[*len] = 0;
+    return out;
+  }
+
+  char key[33] = "";
+  strlcpy(key, keydata, sizeof(key));
+  AES_KEY d_key;
+  AES_set_decrypt_key((const unsigned char *) key, 256, &d_key);
+  AES_cbc_encrypt(out, out, *len, &d_key, ivec, AES_DECRYPT);
+  OPENSSL_cleanse(key, sizeof(key));
+  OPENSSL_cleanse(&d_key, sizeof(d_key));
+
+  *len = strlen((char*) out);
+  out[*len] = 0;
+  return out;
+}
+
+static void edpack_core(settings_t *incfg, const char *in_hash, int what, bool use_cbc)
 {
   char *tmp = NULL, *hash = (char *) in_hash, nhash[51] = "";
-  unsigned char *(*enc_dec_string)(const char *, unsigned char *, size_t *);
+  unsigned char *(*enc_func)(const char *, unsigned char *, size_t *);
+  unsigned char *(*dec_func)(const char *, unsigned char *, size_t *);
+  unsigned char *(*enc_cbc)(const char *, unsigned char *, size_t *, unsigned char *);
+  unsigned char *(*dec_cbc)(const char *, unsigned char *, size_t *, unsigned char *);
+  static unsigned char zero_iv[16] = {0};
+  unsigned char iv_copy[16];
   size_t len = 0;
 
-  if (what == PACK_ENC)
-    enc_dec_string = aes_encrypt_ecb_binary;
-  else
-    enc_dec_string = aes_decrypt_ecb_binary;
+  enc_func = aes_encrypt_ecb_binary;
+  dec_func = aes_decrypt_ecb_binary;
+  enc_cbc = aes_encrypt_cbc_zero;
+  dec_cbc = aes_decrypt_cbc_zero;
 
 #define dofield(_field) 		do {				\
     len = sizeof(_field) - 1;						\
-    tmp = (char *) enc_dec_string(hash, (unsigned char *) _field, &len);\
-    if (what == PACK_ENC) 						\
-      memcpy(_field, tmp, len);						\
-    else 								\
-      simple_snprintf(_field, sizeof(_field), "%s", tmp);		\
+    if (use_cbc) {							\
+      memcpy(iv_copy, zero_iv, sizeof(iv_copy));			\
+      if (what == PACK_ENC) {						\
+        tmp = (char *) enc_cbc(hash, (unsigned char *) _field, &len, iv_copy); \
+        memcpy(_field, tmp, len);					\
+      } else {								\
+        tmp = (char *) dec_cbc(hash, (unsigned char *) _field, &len, iv_copy); \
+        simple_snprintf(_field, sizeof(_field), "%s", tmp);		\
+      }									\
+    } else {								\
+      if (what == PACK_ENC) {						\
+        tmp = (char *) enc_func(hash, (unsigned char *) _field, &len); \
+        memcpy(_field, tmp, len);					\
+      } else {								\
+        tmp = (char *) dec_func(hash, (unsigned char *) _field, &len); \
+        simple_snprintf(_field, sizeof(_field), "%s", tmp);		\
+      }									\
+    }									\
     OPENSSL_cleanse(tmp, len);						\
     free(tmp);								\
 } while (0)
@@ -604,6 +674,33 @@ static void edpack(settings_t *incfg, const char *in_hash, int what)
 #undef dofield
 #undef dohash
 #undef update_hash
+}
+
+static void edpack(settings_t *incfg, const char *in_hash, int what)
+{
+  if (what == PACK_DEC) {
+    settings_t backup;
+    memcpy(&backup, incfg, sizeof(settings_t));
+
+    edpack_core(incfg, in_hash, what, true);
+
+    bool valid = (strlen(incfg->hash) >= 32);
+    if (valid) {
+      for (size_t i = 0; i < 32; ++i) {
+        if (!isxdigit((unsigned char)incfg->hash[i])) {
+          valid = false;
+          break;
+        }
+      }
+    }
+
+    if (!valid) {
+      memcpy(incfg, &backup, sizeof(settings_t));
+      edpack_core(incfg, in_hash, what, false);
+    }
+  } else {
+    edpack_core(incfg, in_hash, what, true);
+  }
 }
 
 #ifdef DEBUG 

@@ -120,11 +120,24 @@ static void got_cset(char *botnick, char *code, char *par)
        putlog(LOG_ERROR, "*", "Got bad cset: bot: %s code: %s par: %s %s", botnick, code, chname, par);
        return;
      }
-     if (isdefault)
-       chan = chanset_default;
-     else if (!(chan = findchan_by_dname(chname)))
-       return;
-   }
+      if (isdefault)
+        chan = chanset_default;
+      else if (!(chan = findchan_by_dname(chname))) {
+        /* Channel doesn't exist on this bot. If this is a group change
+         * (e.g. hub changed groups from fuenf to znc), bots in the new
+         * group need the channel entry to evaluate join. Create it from
+         * the cset data (channel_add merges defaults + chanset_default).
+         * check_shouldjoin() will decide whether to actually join. */
+        char result[RESULT_LEN];
+        if (channel_add(result, chname, par, false) == ERROR) {
+          putlog(LOG_MISC, "*", "Failed to create channel %s from cset: %s", chname, result);
+          return;
+        }
+        chan = findchan_by_dname(chname);
+        if (!chan)
+          return;
+      }
+    }
 
   if (all)
    chan = NULL;
@@ -307,8 +320,13 @@ check_slowjoinpart(struct chanset_t *chan)
   if (chan->channel.parttime && (chan->channel.parttime < now)) {
     chan->channel.parttime = 0;
     dprintf(DP_MODE, "PART %s\n", chan->name);
-    if (chan) /* this should NOT be necesary, but some unforseen bug requires it.. */
-      remove_channel(chan);
+    /* parttime is only set by check_shouldjoin() for group-change-triggered
+     * parts. Always use clear_channel() to preserve the chanset entry and all
+     * per-channel settings (fastop, backup, bitch, protect, etc.) across group
+     * changes. Previously, -inactive channels used remove_channel() which
+     * destroyed the entry, causing got_cset() to recreate it from scratch
+     * with chanset_default settings — losing any per-channel overrides. */
+    clear_channel(chan, 1);
     return 1;		/* if we keep looping, we'll segfault. */
   /* slowjoin */
   } else if ((chan->channel.jointime) && (chan->channel.jointime < now)) {
@@ -637,6 +655,10 @@ void remove_channel(struct chanset_t *chan)
      free(chan->rmkey);
    if (chan->groups) {
      delete(chan->groups);
+   }
+   if (chan->op_delegation_flush_timer) {
+     timer_destroy(chan->op_delegation_flush_timer);
+     chan->op_delegation_flush_timer = 0;
    }
    delete chan->bot_roles;
    delete chan->role_bots;

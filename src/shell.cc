@@ -75,6 +75,12 @@
 #ifdef HAVE_SYS_PTRACE_H
 # include <sys/ptrace.h>
 #endif /* HAVE_SYS_PTRACE_H */
+#ifndef PT_ATTACH
+# define PT_ATTACH PTRACE_ATTACH
+#endif
+#ifndef PT_DETACH
+# define PT_DETACH PTRACE_DETACH
+#endif
 #include <sys/wait.h>
 #include <sys/utsname.h>
 #include <pwd.h>

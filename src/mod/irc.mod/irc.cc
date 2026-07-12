@@ -595,23 +595,10 @@ if (indexHint == 0) {
 }
 #endif
 
-  const time_t optime = atol(ts);
-  if ((((now + timesync) % 10000000) - optime) > 3900)
-    return BC_SLACK;
-
-  //Only check on the first cookie
-  if (indexHint == 0 && conf.bot->u != opper->user) {
-    if (counter <= last_counter)
-      return BC_COUNTER;
-
-    // graceful overflow
-    if (counter > (unsigned long)(-1000))
-      counter = 0;
-
-    //Update counter for the opper
-    bot_counters[handle] = counter;
-  }
-
+  /* Hash check runs BEFORE time check. If the key is wrong (stale
+   * opper->userhost), decryption produces garbage and atol() on garbage
+   * gives a random timestamp, causing BC_SLACK. Checking the hash first
+   * ensures wrong keys are caught as BC_HASH instead. */
   const char *hash = cookie_hash(chname, opper, opped, &ts[1], randstring, key);
 #ifdef DEBUG
 sdprintf("hash: %s", hash);
@@ -627,6 +614,24 @@ sdprintf("hash: %s", hash);
     if ((hash[HASH_INDEX1(i)] == cookie_index[0] && 
          hash[HASH_INDEX2(i)] == cookie_index[1] && 
          hash[HASH_INDEX3(i)] == cookie_index[2])) {
+      /* Hash matched -- now check time */
+      const time_t optime = atol(ts);
+      if ((((now + timesync) % 10000000) - optime) > 180)
+        return BC_SLACK;
+
+      //Only check on the first cookie
+      if (indexHint == 0 && conf.bot->u != opper->user) {
+        if (counter <= last_counter)
+          return BC_COUNTER;
+
+        // graceful overflow
+        if (counter > (unsigned long)(-1000))
+          counter = 0;
+
+        //Update counter for the opper
+        bot_counters[handle] = counter;
+      }
+
       return 0;
     }
   }
@@ -693,7 +698,7 @@ getin_request(char *botnick, char *code, char *par)
 
   memberlist* mem = ismember(chan, nick);
 
-  if (mem && chan_issplit(mem)) {
+  if (mem && chan_issplit(mem) && what[0] != 'i') {
     putlog(LOG_GETIN, "*", "%sreq from %s/%s %s %s - %s is split", type, botnick, nick, desc, chan->dname, nick);
     return;
   }
@@ -783,7 +788,7 @@ getin_request(char *botnick, char *code, char *par)
 
     putlog(LOG_GETIN, "*", "opreq from %s/%s on %s - Opped", botnick, nick, chan->dname);
   } else if (what[0] == 'i') {
-    if (mem) {
+    if (mem && !chan_issplit(mem)) {
       putlog(LOG_GETIN, "*", "inreq from %s/%s for %s - %s is already on %s", botnick, nick, chan->dname, nick, chan->dname);
       return;
     }
@@ -1417,16 +1422,17 @@ warn_pls_take(struct chanset_t *chan)
 }
 
 /* FIXME: max sendq will occur. */
-static void
+static bool
 check_servers(struct chanset_t *chan)
 {
   for (memberlist *m = chan->channel.member; m && m->nick[0]; m = m->next) {
     if (!m->is_me && chan_hasop(m) && (m->hops == -1)) {
       putlog(LOG_DEBUG, "*", "Updating WHO for '%s' because '%s' is missing data.", chan->dname, m->nick);
       send_chan_who(DP_HELP, chan);
-      break;                    /* lets just do one chan at a time to save from flooding */
+      return true;
     }
   }
+  return false;
 }
 
 static void do_protect(struct chanset_t* chan, const char* reason) {
@@ -1496,11 +1502,35 @@ void check_shouldjoin(struct chanset_t* chan)
 {
   if ((channel_active(chan) || channel_pending(chan)) && !shouldjoin(chan)) {
     if (!chan->channel.parttime) {
+      /* Op any bots that are allowed to have op before we leave, so the channel
+       * doesn't lose all ops when we part. Don't require bot_shouldjoin() here:
+       * the new-group bots may have joined before their groups variable has been
+       * synced to this bot, and the only bots joining while we are parting are
+       * the replacement-group bots anyway. */
+      if (me_op(chan) && (chan->role & ROLE_OP)) {
+        struct flag_record fr = { FR_CHAN|FR_GLOBAL|FR_BOT, 0, 0, 0 };
+        for (memberlist *m = chan->channel.member; m && m->nick[0]; m = m->next) {
+          if (m->is_me || m->split || !member_getuser(m) || !is_bot(m->user))
+            continue;
+          get_user_flagrec(m->user, &fr, chan->dname, chan);
+          if (chk_op(fr, chan))
+            do_op(m, chan, 0, 0);
+        }
+        flush_mode(chan, QUICK);
+      }
       sdprintf("Active/Pending in %s but I shouldn't be there, parting in 5s...", chan->dname);
       chan->channel.parttime = now + 5;
     }
   } else if (shouldjoin(chan)) {
     join_chan(chan);
+  } else if (channel_inactive(chan)) {
+    /* Channel is +inactive but bot's group now matches — clear inactive and join */
+    struct flag_record fr = { FR_CHAN|FR_GLOBAL|FR_BOT, 0, 0, 0 };
+    get_user_flagrec(conf.bot->u, &fr, chan->dname, chan);
+    if (bot_shouldjoin(conf.bot->u, &fr, chan, true)) {
+      chan->status &= ~CHAN_INACTIVE;
+      join_chan(chan);
+    }
   }
 }
 
@@ -1574,8 +1604,8 @@ check_expired_chanstuff(struct chanset_t *chan)
           putlog(LOG_JOIN, chan->dname, "%s (%s) got lost in the net-split.", m->nick, m->userhost);
           --(chan->channel.splitmembers);
           killmember(chan, m->nick, false);
-          continue;
         }
+        continue;
       }
 
       //This bot is set +r, so resolve.
@@ -1661,11 +1691,12 @@ irc_minutely()
     if (server_online) {
       if (!channel_pending(chan)) {
         check_netfight(chan);
-        check_servers(chan);
+        if (check_servers(chan)) break;
       }
       check_expired_chanstuff(chan);
     }
   }
+  cleanup_expired_cookies();
 }
 
 

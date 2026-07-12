@@ -28,11 +28,207 @@
 
 
 #include "src/shell.h"
+#include <vector>
 
 /* Reversing this mode? */
 static bool reversing = 0;
 static bool massop = 0;
 static bool mdop_reversing = 1;
+
+/* Pending cookie retry for stale userhosts (Option D).
+ * When checkcookie() returns BC_HASH, we store the cookie data, send WHO
+ * for opper+opped to refresh userhosts, and retry when WHO replies arrive. */
+struct pending_cookie_t {
+  char chan[81];
+  char opper_nick[NICKLEN];
+  char opped_nick[NICKLEN];
+  char cookie[300];
+  int indexHint;
+  time_t timestamp;
+  int retries;
+  bool opper_refreshed;
+  bool opped_refreshed;
+};
+static std::vector<pending_cookie_t> pending_cookies;
+static const int MAX_PENDING_COOKIES = 32;
+static const int PENDING_COOKIE_TIMEOUT = 5;
+
+void store_pending_cookie(struct chanset_t *chan, memberlist *opper,
+    memberlist *opped, const char *cookie, int indexHint)
+{
+  pending_cookie_t pc;
+  strlcpy(pc.chan, chan->dname, sizeof(pc.chan));
+  strlcpy(pc.opper_nick, opper->nick, sizeof(pc.opper_nick));
+  strlcpy(pc.opped_nick, opped->nick, sizeof(pc.opped_nick));
+  strlcpy(pc.cookie, cookie, sizeof(pc.cookie));
+  pc.indexHint = indexHint;
+  pc.timestamp = now;
+  pc.retries = 0;
+  pc.opper_refreshed = false;
+  pc.opped_refreshed = false;
+  pending_cookies.push_back(pc);
+
+  putlog(LOG_GETIN, "*", "Deferred cookie check for %s -> %s in %s (WHO sent)",
+      opper->nick, opped->nick, chan->dname);
+
+  /* Send WHO for both opper and opped to refresh userhosts */
+  dprintf(DP_SERVER, "WHO %s\n", opper->nick);
+  dprintf(DP_SERVER, "WHO %s\n", opped->nick);
+}
+
+void retry_pending_cookies_for_nick(struct chanset_t *chan, const char *nick)
+{
+  char tmp[1024] = "";
+
+  for (int i = pending_cookies.size() - 1; i >= 0; --i) {
+    pending_cookie_t &pc = pending_cookies[i];
+
+    /* Only check cookies for this channel */
+    if (rfc_casecmp(pc.chan, chan->dname))
+      continue;
+
+    /* Mark the matching side as refreshed */
+    if (!pc.opper_refreshed && !rfc_casecmp(pc.opper_nick, nick))
+      pc.opper_refreshed = true;
+    else if (!pc.opped_refreshed && !rfc_casecmp(pc.opped_nick, nick))
+      pc.opped_refreshed = true;
+    else
+      continue;
+
+    /* Both must be refreshed before we can retry */
+    if (!pc.opper_refreshed || !pc.opped_refreshed)
+      continue;
+
+    /* Look up both members */
+    memberlist *opper = ismember(chan, pc.opper_nick);
+    memberlist *opped = ismember(chan, pc.opped_nick);
+
+    if (!opper || !opped) {
+      /* One of them left the channel — genuine failure */
+      putlog(LOG_WARNING, "*", "Pending cookie: %s or %s left %s, applying kick",
+          pc.opper_nick, pc.opped_nick, pc.chan);
+      pending_cookies.erase(pending_cookies.begin() + i);
+      continue;
+    }
+
+    /* Re-attempt cookie verification with updated userhosts */
+    int result = checkcookie(pc.chan, opper, opped, pc.cookie, pc.indexHint);
+    if (result == 0) {
+      /* Success — cookie is now valid, op stands */
+      putlog(LOG_GETIN, "*", "Cookie retry succeeded for %s -> %s in %s",
+          pc.opper_nick, pc.opped_nick, pc.chan);
+      pending_cookies.erase(pending_cookies.begin() + i);
+    } else {
+      pc.retries++;
+      if (pc.retries >= 1) {
+        /* Second failure — genuine bad cookie, apply kicks */
+        putlog(LOG_WARNING, "*", "Cookie retry failed for %s -> %s in %s (%d), applying kick",
+            pc.opper_nick, pc.opped_nick, pc.chan, result);
+
+        /* Kick the opped client (1/7 chance) */
+        if (randint(7) == (unsigned int) pc.indexHint) {
+          if (!chan_sentkick(opped)) {
+            opped->flags |= SENTKICK;
+            const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n",
+                chan->name, pc.opped_nick, kickprefix, response(RES_BADOPPED));
+            dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
+          }
+        }
+
+        /* Kick the opper (1/7 chance) */
+        if (randint(7) == 0) {
+          if (!chan_sentkick(opper)) {
+            opper->flags |= SENTKICK;
+            const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n",
+                chan->name, pc.opper_nick, kickprefix, response(RES_BADOP));
+            dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
+          }
+          /* Deflag opper */
+          struct userrec *u = opper->user;
+          if (u) {
+            simple_snprintf(tmp, sizeof(tmp), "%s MODE %s bad cookie",
+                opper->nick, pc.chan);
+            deflag_user(u, DEFLAG_EVENT_BADCOOKIE, tmp, chan);
+          }
+        }
+
+        pending_cookies.erase(pending_cookies.begin() + i);
+      } else {
+        /* First retry failed — send another WHO and wait */
+        putlog(LOG_GETIN, "*", "Cookie retry %d failed for %s -> %s in %s, sending WHO",
+            pc.retries, pc.opper_nick, pc.opped_nick, pc.chan);
+        pc.opper_refreshed = false;
+        pc.opped_refreshed = false;
+        pc.timestamp = now;
+        dprintf(DP_SERVER, "WHO %s\n", pc.opper_nick);
+        dprintf(DP_SERVER, "WHO %s\n", pc.opped_nick);
+      }
+    }
+  }
+}
+
+void cleanup_expired_cookies(void)
+{
+  char tmp[1024] = "";
+
+  for (int i = pending_cookies.size() - 1; i >= 0; --i) {
+    pending_cookie_t &pc = pending_cookies[i];
+
+    if ((now - pc.timestamp) <= PENDING_COOKIE_TIMEOUT)
+      continue;
+
+    /* Expired — attempt one final verification */
+    struct chanset_t *chan = findchan(pc.chan);
+    if (!chan) {
+      pending_cookies.erase(pending_cookies.begin() + i);
+      continue;
+    }
+
+    memberlist *opper = ismember(chan, pc.opper_nick);
+    memberlist *opped = ismember(chan, pc.opped_nick);
+
+    if (!opper || !opped) {
+      pending_cookies.erase(pending_cookies.begin() + i);
+      continue;
+    }
+
+    int result = checkcookie(pc.chan, opper, opped, pc.cookie, pc.indexHint);
+    if (result == 0) {
+      putlog(LOG_GETIN, "*", "Pending cookie expired but valid for %s -> %s in %s",
+          pc.opper_nick, pc.opped_nick, pc.chan);
+    } else {
+      /* Genuine failure — apply kicks */
+      putlog(LOG_WARNING, "*", "Pending cookie expired for %s -> %s in %s (%d), applying kick",
+          pc.opper_nick, pc.opped_nick, pc.chan, result);
+
+      if (randint(7) == (unsigned int) pc.indexHint) {
+        if (!chan_sentkick(opped)) {
+          opped->flags |= SENTKICK;
+          const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n",
+              chan->name, pc.opped_nick, kickprefix, response(RES_BADOPPED));
+          dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
+        }
+      }
+
+      if (randint(7) == 0) {
+        if (!chan_sentkick(opper)) {
+          opper->flags |= SENTKICK;
+          const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n",
+              chan->name, pc.opper_nick, kickprefix, response(RES_BADOP));
+          dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
+        }
+        struct userrec *u = opper->user;
+        if (u) {
+          simple_snprintf(tmp, sizeof(tmp), "%s MODE %s bad cookie",
+              opper->nick, pc.chan);
+          deflag_user(u, DEFLAG_EVENT_BADCOOKIE, tmp, chan);
+        }
+      }
+    }
+
+    pending_cookies.erase(pending_cookies.begin() + i);
+  }
+}
 
 #  define PLUS    BIT0
 #  define MINUS   BIT1
@@ -1195,7 +1391,7 @@ gotmode(char *from, char *msg)
         }
         if (ops) {
           /* Check cookies */
-          if (u && m && u->bot && !channel_fastop(chan) && !channel_take(chan) && !cookies_disabled) {
+          if (u && m && u->bot && !channel_fastop(chan) && !channel_take(chan) && !cookies_disabled && !chan->channel.parttime) {
             int isbadop = 0;
             bool failure = 0;
 
@@ -1206,6 +1402,9 @@ gotmode(char *from, char *msg)
             } else {
               /* Check the hash for each opped nick and punish the opped client if it fails
                * Punish the opper lastly (and once)
+               *
+               * On BC_HASH: defer kick and send WHO to refresh stale userhosts.
+               * On other errors (BC_SLACK, BC_COUNTER, BC_NOCOOKIE): kick immediately.
                */
               for (i = 0; i < (modecnt - 1); i++) { /* Don't need to hit the -b */
                 if (msign == '+' && mmode == 'o') {
@@ -1215,9 +1414,13 @@ gotmode(char *from, char *msg)
 
                   const char *cookie = &(modes[modecnt - 1][3]);
                   if ((isbadop = checkcookie(chan->dname, m, mv, cookie, i))) {
-                    //if (!failure) { /* First failure */
+                    if (isbadop == BC_HASH && (int)pending_cookies.size() < MAX_PENDING_COOKIES) {
+                      /* Defer: store pending cookie, send WHO, skip kick for this nick */
+                      store_pending_cookie(chan, m, mv, cookie, i);
+                      continue;
+                    }
+
                     failure = 1;
-                    //}
 
                     /* Kick the opped client */
                     if (randint(7) == (unsigned int) i) {

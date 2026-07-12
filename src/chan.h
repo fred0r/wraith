@@ -313,6 +313,8 @@ struct chanset_t {
   int role;
 
   unsigned long role_rebalance_cookie;
+
+  int op_delegation_flush_timer;
 };
 
 /* behavior modes for the channel */

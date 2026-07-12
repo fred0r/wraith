@@ -1,6 +1,6 @@
 #! /bin/sh
 
-PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:${HOME}/bin
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/pkg/bin:${HOME}/bin
 
 if [ -d .git ]; then
   BUILDTS=$(git log -1 --pretty=format:%ct HEAD)
@@ -106,6 +106,20 @@ then
   echo "[!] Automated packaging disabled, `uname` isn't recognized"
 fi
 
+# Use gmake on BSD systems where default make is BSD make
+case "$os" in
+  FreeBSD|OpenBSD|NetBSD)
+    if command -v gmake >/dev/null 2>&1; then
+      MAKE=gmake
+    else
+      MAKE=make
+    fi
+    ;;
+  *)
+    MAKE=make
+    ;;
+esac
+
 if [ $compile = "1" ]; then
 
  echo "[*] Building ${PACKNAME} for $os"
@@ -113,7 +127,7 @@ if [ $compile = "1" ]; then
  if [ $clean = "2" ]; then
   if test -f Makefile; then
    echo "[*] DistCleaning old files..."
-   make distclean > /dev/null
+    ${MAKE} distclean > /dev/null
   fi
  fi
 
@@ -133,10 +147,10 @@ _build()
 {
  if [ $compile = "1" ]; then
   echo "[*] Building ${dmake}${tb}..."
-  if [ $debug = "1" ]; then
-    make debug
+    if [ $debug = "1" ]; then
+    ${MAKE} debug
   else
-    make dynamic
+    ${MAKE} dynamic
   fi
   if ! test -f ${tb}; then
     echo "[!] ${dmake}${tb} build failed"

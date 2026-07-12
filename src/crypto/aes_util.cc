@@ -14,8 +14,11 @@
 AesCipher::AesCipher(const std::string& key)
 {
   if (!key.empty()) {
-    AES_set_encrypt_key((const unsigned char *)key.c_str(), CRYPT_KEYBITS, &enc_key_);
-    AES_set_decrypt_key((const unsigned char *)key.c_str(), CRYPT_KEYBITS, &dec_key_);
+    char padded_key[CRYPT_KEYSIZE + 1] = "";
+    strlcpy(padded_key, key.c_str(), sizeof(padded_key));
+    AES_set_encrypt_key((const unsigned char *)padded_key, CRYPT_KEYBITS, &enc_key_);
+    AES_set_decrypt_key((const unsigned char *)padded_key, CRYPT_KEYBITS, &dec_key_);
+    OPENSSL_cleanse(padded_key, sizeof(padded_key));
   } else {
     memset(&enc_key_, 0, sizeof(enc_key_));
     memset(&dec_key_, 0, sizeof(dec_key_));

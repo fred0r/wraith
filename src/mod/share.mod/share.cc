@@ -429,6 +429,11 @@ share_chattr(int idx, char *par)
               putlog(LOG_CMDS, "@", "%s: chattr %s %s", dcc[idx].nick, hand, s);
           } else {
             check_this_user(u->handle, 0, NULL);
+            if ((ofl ^ u->flags) & BOT_CHANHUB) {
+              chatout("*** %s is now a chathub (+c).\n", u->handle);
+              if (ssl_use == 2)
+                chatout("*** Jump to an SSL server for auth/-g to work.\n");
+            }
           }
         }
         noshare = 0;

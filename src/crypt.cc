@@ -55,6 +55,8 @@ char *decrypt_string(const char *keydata, char *in)
 
 int salted_sha1cmp(const char *salted_hash, const char *string) {
   char* cmp = salted_sha1(string, &salted_hash[1]); //Pass in the salt from the given hash
+  if (!cmp)
+    return -1;
   int n = strcmp(salted_hash, cmp);
   free(cmp);
   return n;

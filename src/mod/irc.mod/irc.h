@@ -169,6 +169,10 @@ void reset_chan_info(struct chanset_t *);
 char *getnick(const char *, struct chanset_t *);
 void check_shouldjoin(struct chanset_t* chan);
 void delete_member(memberlist* m);
+void store_pending_cookie(struct chanset_t *chan, memberlist *opper,
+    memberlist *opped, const char *cookie, int indexHint);
+void retry_pending_cookies_for_nick(struct chanset_t *chan, const char *nick);
+void cleanup_expired_cookies(void);
 
 extern int		max_bans, max_exempts, max_invites, max_modes;
 extern bool		use_354, include_lk;

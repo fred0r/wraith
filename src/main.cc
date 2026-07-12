@@ -105,6 +105,8 @@ int	default_uflags = 0;	/* Default userdefinied flags for people
 				   who say 'hello' or for .adduser */
 int     do_restart = 0;
 int     do_write_userfile = 0;
+int     update_pending_leaves = 0;
+int     update_restart_timer_id = -1;
 bool	backgrd = 1;		/* Run in the background? */
 uid_t   myuid;
 pid_t   mypid;
@@ -263,7 +265,10 @@ static void checkpass()
   char *gpasswd = (char*) getpass(SHELL_PROMPT);
 #endif
   if (gpasswd) {
-    checkedpass = hash_cmp(settings.shellhash, gpasswd);
+    if (hash_cmp)
+      checkedpass = hash_cmp(settings.shellhash, gpasswd);
+    else
+      checkedpass = 1;
 
     /* Most PASS_MAX are 256.. but it's not clear */
     OPENSSL_cleanse(gpasswd, strlen(gpasswd));

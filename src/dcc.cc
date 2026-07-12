@@ -1029,8 +1029,10 @@ dcc_chat_pass(int idx, char *buf, int atr)
           dcc[idx].status = STAT_CALLED;
         dprintf(idx, "goodbye!\n");
         greet_new_bot(idx);
-        if (conf.bot->hub || conf.bot->localhub)
+        if (conf.bot->hub || conf.bot->localhub) {
           send_timesync(idx);
+          send_timesync(-1);
+        }
       } else {
         // User encrypted over relay
         /* Turn off remote telnet echo (send IAC WILL ECHO). */

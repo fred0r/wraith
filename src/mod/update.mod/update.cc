@@ -151,6 +151,7 @@ static void update_ufsend(int idx, char *par)
     if (sock < 0 || (open_telnet_return = open_telnet_dcc(sock, ip, port)) < 0) {
       if (open_telnet_return != -1 && sock != -1)
         killsock(sock);
+      fclose(f);
       putlog(LOG_BOTS, "*", "Asynchronous connection failed!");
       dprintf(idx, "sb e Can't connect to you!\n");
       zapfbot(idx);
@@ -199,6 +200,7 @@ static void update_stream_end(int idx, char *par) {
   }
   stream_in.seek(0, SEEK_SET);
   finish_update_stream(idx, stream_in);
+  dcc[idx].status &= ~STAT_GETTINGU;
 }
 
 /* Note: these MUST be sorted. */
@@ -297,7 +299,7 @@ ulsend(int idx, const char* data, size_t datalen)
 {
   char buf[1400] = "";
 
-  size_t len = simple_snprintf(buf, sizeof(buf), "sb l %zu %s", datalen-1, data);/* -1 for newline */
+  size_t len = simple_snprintf(buf, sizeof(buf), "sb l %zu %s", datalen, data);
   tputs(dcc[idx].sock, buf, len);
 }
 
@@ -327,6 +329,7 @@ static void start_sending_binary(int idx, bool streamable)
 
   if (!sysname || !sysname[0] || !strcmp("*", sysname)) {
     putlog(LOG_MISC, "*", "Cannot update \002%s\002 automatically, `uname` not returning os name.", dcc[idx].nick);
+    bupdating = 0;
     return;
   }
 
@@ -477,10 +480,12 @@ void update_report(int idx, int details)
 
 static void cmd_bupdate(int idx, char *par)
 {
+  bupdating = 0;
   for (int i = 0; i < dcc_total; i++) {
     if (dcc[i].type && !strcasecmp(dcc[i].nick, par)) {
+      putlog(LOG_BOTS, "*", "Sending binary update request to %s", par);
       dprintf(i, "sb u?\n");
-      dcc[i].status &= ~(STAT_SENDINGU | STAT_UPDATED);
+      dcc[i].status &= ~(STAT_SENDINGU | STAT_GETTINGU | STAT_UPDATED);
       dcc[i].status |= STAT_OFFEREDU;
     }
   }

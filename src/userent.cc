@@ -611,6 +611,8 @@ static bool pass_set(struct userrec *u, struct user_entry *e, void *buf)
   char *newpass = NULL;
   char *pass = (char *) buf;
 
+  if (pass && pass[0] && pass[0] != '-' && !u->bot && pass[0] != '+' && (strlen(pass) < 8 || strlen(pass) > 64))
+    return 0;
   free(e->u.extra);
   if (!pass || !pass[0] || (pass[0] == '-'))
     e->u.extra = NULL;

@@ -54,6 +54,7 @@
 #include "userrec.h"
 #include "stat.h"
 #include "net.h"
+#include "socket.h"
 #include "EncryptedStream.h"
 #include <bdlib/src/String.h>
 #include <bdlib/src/Stream.h>
@@ -806,8 +807,12 @@ restart(int idx)
   noshare = 1;
 
   /* kill all connections except STDOUT/server */
+  /* Preserve unix domain sockets — conf.bots connected via local socket
+   * stay alive and will detect the EOF when execvp replaces this process.
+   * They reconnect to the new binary without restarting or dropping IRC. */
   for (fd = 0; fd < dcc_total; fd++) {
-    if (dcc[fd].type && dcc[fd].type != &SERVER_SOCKET && dcc[fd].sock != STDOUT) {
+    if (dcc[fd].type && dcc[fd].type != &SERVER_SOCKET && dcc[fd].sock != STDOUT &&
+        !(dcc[fd].status & STAT_UNIXDOMAIN)) {
       if (dcc[fd].sock >= 0)
         killsock(dcc[fd].sock);
       lostdcc(fd);
@@ -863,6 +868,18 @@ restart(int idx)
 
   stream.writeFile(socks->fd);
 
+#ifdef EGG_SSL_EXT
+  /* Send QUIT through SSL so IRC server shows clean quit, not SSL error. */
+  if (servidx >= 0 && dcc[servidx].sock >= 0 && server_using_ssl) {
+    int si = findanysnum(dcc[servidx].sock);
+    if (si != -1 && socklist[si].ssl) {
+      socket_set_nonblock(dcc[servidx].sock, 0);
+      SSL_write(socklist[si].ssl, "QUIT :changing servers\r\n", 26);
+      socket_set_nonblock(dcc[servidx].sock, 1);
+    }
+  }
+#endif
+
   socks->my_close();
 
   write_userfile(idx);
@@ -891,8 +908,10 @@ restart(int idx)
 
   unlink(conf.bot->pid_file);
   FILE *fp = NULL;
-  if (!(fp = fopen(conf.bot->pid_file, "w")))
+  if (!(fp = fopen(conf.bot->pid_file, "w"))) {
+    putlog(LOG_MISC, "*", STR("Could not restart: cannot write pid file %s: %s"), conf.bot->pid_file, strerror(errno));
     return;
+  }
   fprintf(fp, "%d %s\n", getpid(), socks->file);
   fclose(fp);
 
@@ -947,7 +966,7 @@ int updatebin(int idx, char *par, int secs)
     free(path);
     return 1;
   }
-  strcpy(newbin, par);
+  strlcpy(newbin, par, path_siz - (newbin - path));
   if (!strcmp(path, binname)) {
     free(path);
     logidx(idx, "%s", STR("Can't update with the current binary"));
@@ -1000,6 +1019,8 @@ int updatebin(int idx, char *par, int secs)
   i = simple_exec(argv);
   if (i == -1 || WEXITSTATUS(i) != 2) {
     logidx(idx, STR("Couldn't restart new binary (error %d)"), i);
+    if (WEXITSTATUS(i) == 1)
+      logidx(idx, "%s", STR("Hint: new binary needs ChaCha20-Poly1305; your SSL library may be too old."));
     delete conffile;
     return i;
   }
@@ -1041,7 +1062,14 @@ int updatebin(int idx, char *par, int secs)
     /* Make all other bots do a soft restart */
     conf_checkpids(conf.bots);
     conf_killbot(conf.bots, NULL, NULL, SIGHUP);
-    
+
+    /* Track leaf drones being restarted */
+    update_pending_leaves = 0;
+    for (conf_bot *bot = conf.bots; bot && bot->nick; bot = bot->next) {
+      if (!bot->hub)
+        update_pending_leaves++;
+    }
+
     /* invoked with -u */
     if (updating == UPDATE_AUTO) {
       if (conf.bot->pid)
@@ -1055,7 +1083,7 @@ int updatebin(int idx, char *par, int secs)
       egg_timeval_t howlong;
       howlong.sec = secs;
       howlong.usec = 0;
-      timer_create_complex(&howlong, STR("restarting for update"), (Function) restart, (void *) (long) idx, 0);
+      update_restart_timer_id = timer_create_complex(&howlong, STR("restarting for update"), (Function) restart, (void *) (long) idx, 0);
     } else
       restart(idx);
 
@@ -1091,6 +1119,9 @@ int bot_aggressive_to(struct userrec *u)
 int goodpass(const char *pass, int idx, char *nick)
 {
   if (!pass[0]) 
+    return 0;
+
+  if (strlen(pass) < 8)
     return 0;
 
   char tell[201] = "", last = 0;
