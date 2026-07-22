@@ -4285,7 +4285,7 @@ static void rcmd_pong(const char *frombot, const char *fromhand, const char *fro
 
     timer_update_now(&tv);
     long tm = ((tv.sec % 10000) * 1000 + tv.usec / 1000) - atol(par);
-    dprintf(i, "Pong from %s: %ld.%02ld seconds\n", frombot, (long)(tm / 1000), (long)(tm % 1000));
+    dprintf(i, "Pong from %s: %ld ms\n", frombot, tm);
   }
 }
 

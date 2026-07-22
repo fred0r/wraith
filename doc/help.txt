@@ -463,7 +463,10 @@ See also: link%{+a}, newhub%{-}
  
    The following can be set + or - (e.g. '%dchanset #channel -enforcebans')
         $bautoop$b         Bots that are +y will auto-op all users with 
-                       op access to the channel.
+                       op access to the channel.  Users with the +O
+                       flag (global or channel-specific) will also be
+                       auto-opped even if +autoop is not set on the
+                       channel, as long as they have +o access.
         $bbackup$b         Make backup-bots (+B) join when set.
         $bbitch$b          Only let users with the +o flag have op on the
                        channel?
@@ -615,10 +618,13 @@ See also: %{-}%{+n}+chan, -chan%{-}%{+m|m}, chanset%{-}
    he is a chanop.  The second "kantSF" is the nickname that the
    bot knows him by.  Sometimes this will differ from the nickname
    a person is using.  The time displayed is the time the user
-   joined the channel.  The next field is the attributes:
+   joined the channel.     The next field is the attributes:
       n - bot owner                      o - can get ops (+o)
       m - bot master or owner            b - another bot
-      d - cannot get ops (+d)
+      d - cannot get ops (+d)            O - autoop (+O)
+      k - auto-kick (+k)                v - voice (+v)
+      x - noflood (+x)                  w - wastoptest (+w)
+      q - quiet (+q)
    The last field is the user@host he is using irc from.
  
 See also: status, whois

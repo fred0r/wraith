@@ -1224,7 +1224,7 @@ static void check_this_member(struct chanset_t *chan, memberlist *m,
 
   /* +d or bitch and not an op
    * we dont check private because +private does not imply bitch. */
-  if (chan_hasop(m) && 
+  if (chan_hasop(m) &&
       (chk_deop(*fr, chan) ||
        (!loading && userlist && chan_bitch(chan) && !chk_op(*fr, chan)) ) ) {
     /* if (target_priority(chan, m, 1)) */
@@ -2937,8 +2937,8 @@ static int gotjoin(char *from, char *chname)
            * Don't require bot_shouldjoin() here: the new-group bot may join before
            * its groups variable has been synced to this bot. As long as it has op
            * flags, give it op so the channel doesn't lose all ops when we part. */
-          if (!chan_hasop(m) && !chan_sentop(m) && chan->channel.parttime &&
-              is_bot(m->user) && chk_op(fr, chan) && (chan->role & ROLE_OP)) {
+          if (!chan_hasop(m) && !chan_sentop(m) && chan->channel.groupchange_op_sent &&
+              is_bot(m->user) && chk_op(fr, chan)) {
             do_op(m, chan, 0, 0);
             if (!chan->op_delegation_flush_timer) {
               egg_timeval_t howlong = { 1, 0 };
@@ -3002,8 +3002,10 @@ static int gotpart(char *from, char *msg)
     struct userrec *u = (m && m->user) ? m->user : get_user_by_host(from);
 
     if (!channel_active(chan)) {
-      /* whoa! */
-      putlog(LOG_ERRORS, "*", "confused bot: guess I'm on %s and didn't realize it", chan->dname);
+      /* Don't warn during coordinated cycling — the channel is
+       * intentionally +inactive with a pending jointime. */
+      if (!chan->channel.jointime)
+        putlog(LOG_ERRORS, "*", "confused bot: guess I'm on %s and didn't realize it", chan->dname);
       chan->ircnet_status |= CHAN_ACTIVE;
       chan->ircnet_status &= ~(CHAN_PEND | CHAN_JOINING);
       reset_chan_info(chan);

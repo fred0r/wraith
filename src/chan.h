@@ -161,6 +161,7 @@ struct chan_t {
   masklist *invite;
   time_t jointime;
   time_t parttime;
+  time_t groupchange_op_sent;  /* when this bot (or a peer via 'go' msg) last sent group-change ops */
   time_t no_op;
   time_t drone_jointime;
   time_t last_eI;      /* this will stop +e and +I from being checked over and over if the bot is stuck in a

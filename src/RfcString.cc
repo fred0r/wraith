@@ -7,8 +7,6 @@
 int
 RfcString::compare(const RfcString& str, size_t n) const noexcept
 {
-  if (rfc_casecmp != _rfc_casecmp)
-    return String::compare(str, n);
   /* Same string? */
   if (cbegin() == str.cbegin() && length() == str.length())
     return 0;
@@ -39,8 +37,6 @@ RfcString::compare(const RfcString& str, size_t n) const noexcept
 size_t
 RfcString::hash() const noexcept {
   if (my_hash != 0) return my_hash;
-  if (rfc_casecmp != _rfc_casecmp)
-    return String::hash();
   std::hash<value_type> hasher;
   size_t _hash = 5381;
 

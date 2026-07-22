@@ -278,14 +278,17 @@ static void got_cycle(char *botnick, char *code, char *par)
   if (!(chan = findchan_by_dname(chname)))
    return;
 
-  interval_t delay = 10;
+  /* Per-bot staggered delay from nick hash.
+   * All bots part together but rejoin at different times (5-30s),
+   * so the first to rejoin gets ops. */
+  unsigned int nick_hash = 0;
+  for (const char *p = conf.bot->nick; *p; p++)
+    nick_hash = nick_hash * 31 + (unsigned char)*p;
+  interval_t delay = (nick_hash % 26) + 5;
 
-  if (par[0])
-    delay = atoi(newsplit(&par));
-  
   do_chanset(NULL, chan, "+inactive", DO_LOCAL);
   dprintf(DP_SERVER, "PART %s\n", chan->name);
-  chan->channel.jointime = ((now + delay) - server_lag); 		/* rejoin in 10 seconds */
+  chan->channel.jointime = ((now + delay) - server_lag);
 }
 
 static void got_down(char *botnick, char *code, char *par)
@@ -319,6 +322,7 @@ check_slowjoinpart(struct chanset_t *chan)
   /* slowpart */
   if (chan->channel.parttime && (chan->channel.parttime < now)) {
     chan->channel.parttime = 0;
+    chan->channel.groupchange_op_sent = 0;
     dprintf(DP_MODE, "PART %s\n", chan->name);
     /* parttime is only set by check_shouldjoin() for group-change-triggered
      * parts. Always use clear_channel() to preserve the chanset entry and all
@@ -401,8 +405,10 @@ static void got_sp(int idx, char *code, char *par)
     if (conf.bot->hub) {
       remove_channel(chan);
       write_userfile(-1);
-    } else
+    } else {
       chan->channel.parttime = ((atoi(par) + now) - server_lag);
+      chan->channel.groupchange_op_sent = now;
+    }
   }
 }
 
@@ -835,12 +841,22 @@ void channels_report(int idx, int details)
   }
 }
 
+static void got_go(char *botnick, char *code, char *par)
+{
+  if (!par || !par[0])
+    return;
+  struct chanset_t *chan = findchan_by_dname(par);
+  if (chan && chan->channel.parttime)
+    chan->channel.groupchange_op_sent = now;
+}
+
 cmd_t channels_bot[] = {
   {"cjoin",	"", 	(Function) got_cjoin, 	NULL, 0},
   {"cpart",	"", 	(Function) got_cpart, 	NULL, 0},
   {"cset",	"", 	(Function) got_cset,  	NULL, 0},
   {"cycle",	"", 	(Function) got_cycle, 	NULL, LEAF},
   {"down",	"", 	(Function) got_down,  	NULL, LEAF},
+  {"go",	"", 	(Function) got_go,    	NULL, 0},
   {"kl",	"", 	(Function) got_kl,    	NULL, 0},
   {"sj",	"", 	(Function) got_sj,    	NULL, 0},
   {"sp",	"", 	(Function) got_sp,    	NULL, 0},

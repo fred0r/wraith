@@ -754,6 +754,13 @@ got_op(struct chanset_t *chan, memberlist *m, memberlist *mv)
   if (!meop && me_opped) {
     check_chan = 1;
     meop = 1;
+    /* Only log if channel was completely opless (first bot to get ops).
+     * Avoids spamming the partyline when multiple bots get opped. */
+    bool had_ops = false;
+    for (memberlist *x = chan->channel.member; x && x->nick[0]; x = x->next)
+      if (!x->is_me && chan_hasop(x)) { had_ops = true; break; }
+    if (!had_ops)
+      putlog(LOG_MISC, "*", "Got ops on %s.", chan->dname);
   }
 
   get_user_flagrec(mv->user, &victim, chan->dname, chan);

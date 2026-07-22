@@ -402,12 +402,12 @@ int cnt = 0;
 static void check_updates()
 {
   if (isupdatehub()) {
-    int i;
+    int i, offered = 0;
     char buf[1024] = "";
     tand_t *bot = NULL;
 
     cnt++;
-    if ((cnt > 5) && bupdating)  bupdating = 0; /* 2 minutes should be plenty. */
+    if ((cnt > 1) && bupdating)  bupdating = 0;
     if (bupdating) return;
     cnt = 0;
 
@@ -423,13 +423,17 @@ static void check_updates()
           putlog(LOG_DEBUG, "@", "Bot: %s has build %li/%s, offering them %li/%s", dcc[i].nick, (long)bot->buildts, bot->commit, (long) buildts, commit);
           dprintf(i, "sb u?\n");
           dcc[i].status |= STAT_OFFEREDU;
+          offered = 1;
+          break;
         }
       }
     }
-    /* send out notice to update remote bots ... */
-    /* 9999 is a hack to force all bots from old svn-revisions to upgrade to new git style */
-    simple_snprintf(buf, sizeof buf, "nu? %li 9999 %s", (long) buildts, commit);
-    putallbots(buf);
+    if (!offered) {
+      /* send out notice to update remote bots ... */
+      /* 9999 is a hack to force all bots from old svn-revisions to upgrade to new git style */
+      simple_snprintf(buf, sizeof buf, "nu? %li 9999 %s", (long) buildts, commit);
+      putallbots(buf);
+    }
   }
 }
 
@@ -502,7 +506,7 @@ void update_init()
   add_builtins("bot", update_bot);
   add_builtins("dcc", update_cmds);
   if (conf.bot->hub) {
-    timer_create_secs(30, "check_updates", (Function) check_updates);
+    timer_create_secs(20, "check_updates", (Function) check_updates);
   }
 }
 /* vim: set sts=2 sw=2 ts=8 et: */

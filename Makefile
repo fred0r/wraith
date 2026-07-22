@@ -3,10 +3,6 @@
 #
 #
 
-ifdef .MAKE_VERSION
-.error "BSD make detected. This project requires GNU make (gmake). Please install gmake and run 'gmake' instead of 'make'."
-endif
-
 SHELL = /bin/sh
 top_srcdir = .
 srcdir = .

@@ -1389,27 +1389,36 @@ check_lonely_channel(struct chanset_t *chan)
         putlog(LOG_MISC, "*", "%s is active but has no ops :(", chan->dname);
       whined = 1;
     }
-#ifdef disabled
-    memberlist *m = NULL;
-    bool ok = 1;
+    /* If ALL members are bots and +cycle is set, coordinate a
+     * synchronised cycle via botnet. All bots part together but
+     * rejoin at staggered intervals so the first to rejoin gets ops. */
+    if (channel_cycle(chan) && chan->name[0] != '+') {
+      memberlist *m = NULL;
+      bool all_bots = 1;
 
-    for (m = chan->channel.member; m && m->nick[0]; m = m->next) {
-      member_getuser(m, 0);
-
-      if (!m->is_me && (!m->user || !m->user->bot)) {
-        ok = 0;
-        break;
+      for (m = chan->channel.member; m && m->nick[0]; m = m->next) {
+        if (m->is_me || m->split)
+          continue;
+        member_getuser(m, 0);
+        if (!m->user || !m->user->bot) {
+          all_bots = 0;
+          break;
+        }
+      }
+      if (all_bots) {
+        char cycle_msg[120];
+        simple_snprintf(cycle_msg, sizeof(cycle_msg), "cycle %s", chan->dname);
+        putallbots(cycle_msg);
+        /* Also cycle self */
+        do_chanset(NULL, chan, "+inactive", DO_LOCAL);
+        dprintf(DP_SERVER, "PART %s\n", chan->name);
+        unsigned int nick_hash = 0;
+        for (const char *p = conf.bot->nick; *p; p++)
+          nick_hash = nick_hash * 31 + (unsigned char)*p;
+        chan->channel.jointime = ((now + (nick_hash % 26) + 5) - server_lag);
+        whined = 0;
       }
     }
-    if (ok && channel_cycle(chan)) {
-      /* ALL bots!  make them LEAVE!!! */
-/*
-      for (m = chan->channel.member; m && m->nick[0]; m = m->next)
-	if (!m->is_me)
-	  dprintf(DP_SERVER, "PRIVMSG %s :go %s\n", m->nick, chan->dname);
-*/
-    }
-#endif
   }
 }
 
@@ -1501,13 +1510,13 @@ raise_limit(struct chanset_t *chan, int default_limitraise)
 void check_shouldjoin(struct chanset_t* chan)
 {
   if ((channel_active(chan) || channel_pending(chan)) && !shouldjoin(chan)) {
-    if (!chan->channel.parttime) {
+    if (!chan->channel.groupchange_op_sent) {
       /* Op any bots that are allowed to have op before we leave, so the channel
        * doesn't lose all ops when we part. Don't require bot_shouldjoin() here:
        * the new-group bots may have joined before their groups variable has been
        * synced to this bot, and the only bots joining while we are parting are
        * the replacement-group bots anyway. */
-      if (me_op(chan) && (chan->role & ROLE_OP)) {
+      if (me_op(chan)) {
         struct flag_record fr = { FR_CHAN|FR_GLOBAL|FR_BOT, 0, 0, 0 };
         for (memberlist *m = chan->channel.member; m && m->nick[0]; m = m->next) {
           if (m->is_me || m->split || !member_getuser(m) || !is_bot(m->user))
@@ -1517,6 +1526,12 @@ void check_shouldjoin(struct chanset_t* chan)
             do_op(m, chan, 0, 0);
         }
         flush_mode(chan, QUICK);
+      }
+      chan->channel.groupchange_op_sent = now;
+      {
+        char go_msg[120];
+        simple_snprintf(go_msg, sizeof(go_msg), "go %s", chan->dname);
+        putallbots(go_msg);
       }
       sdprintf("Active/Pending in %s but I shouldn't be there, parting in 5s...", chan->dname);
       chan->channel.parttime = now + 5;
