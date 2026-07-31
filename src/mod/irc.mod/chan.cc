@@ -2946,6 +2946,10 @@ static int gotjoin(char *from, char *chname)
                   timer_create_complex(&howlong, "opdel_flush",
                       (Function) op_delegation_flush, chan, 0);
             }
+            /* New-group bot now has op; leave immediately instead of
+             * waiting for the 5s parttime fallback. MODE +o is queued
+             * before PART so the server processes op before we leave. */
+            chan->channel.parttime = now;
           }
 
           /* +v or +voice */
