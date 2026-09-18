@@ -6,12 +6,12 @@
 #ifndef _EGG_MOD_TRANSFER_TRANSFER_H
 #define _EGG_MOD_TRANSFER_TRANSFER_H
 
-enum dccsend_types {
-  DCCSEND_OK = 0,
-  DCCSEND_FULL,		/* DCC table is full			*/
-  DCCSEND_NOSOCK,	/* Can not open a listening socket	*/
-  DCCSEND_BADFN,	/* No such file				*/
-  DCCSEND_FEMPTY	/* File is empty			*/
+enum class DccSendResult : int {
+  Ok = 0,
+  Full,			/* DCC table is full			*/
+  NoSock,		/* Can not open a listening socket	*/
+  BadFn,		/* No such file				*/
+  FEmpty		/* File is empty			*/
 };
 
 enum {                          /* transfer connection handling a ...   */
@@ -30,7 +30,7 @@ enum {
         XFER_ACK_WITHOUT_OFFSET /* Skipped data is NOT counted in ack.  */
 };
 
-int raw_dcc_send(const char *, const char *, const char *, int *);
+DccSendResult raw_dcc_send(const char *, const char *, const char *, int *);
 
 #ifdef MAKING_TRANSFER
 #define TRANSFER_REGET_PACKETID 0xfeab

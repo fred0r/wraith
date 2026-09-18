@@ -34,6 +34,7 @@
 #include "src/chanprog.h"
 #include "src/users.h"
 #include "src/userrec.h"
+#include "src/userent.h"
 #include "src/botnet.h"
 #include "src/auth.h"
 #include "src/set.h"
@@ -54,7 +55,6 @@
 #include "src/mod/irc.mod/irc.h"
 #include "src/mod/server.mod/server.h"
 
-void irc_init();
 
 static struct flag_record fr = { 0, 0, 0, 0 };
 
@@ -102,25 +102,42 @@ typedef struct tandbuf_t {
   char bot[HANDLEN + 1];
 } tandbuf;
 
+class ResyncBuffer : public tandbuf {
+public:
+  static void create(const char *bot);
+  static void destroy(tandbuf *goner);
+  static bool flush(const char *bot);
+  static void queue_bot(const char *bot, const char *s);
+  static void queue_all(const char *s);
+  static void queue_all_but(const char *s, const char *bot);
+  static void dump(int idx);
+  static void expire();
+};
+
+static_assert(sizeof(ResyncBuffer) == sizeof(tandbuf), "ResyncBuffer must not change tandbuf layout");
+
 tandbuf *tbuf = NULL;
 
+static ShareReadyFn share_userfile_ready = NULL;
 
-/* Create a tandem buffer for 'bot'.
- */
-static void new_tbuf(char *bot)
+void share_set_userfile_ready(ShareReadyFn fn)
 {
-  tandbuf **old = &tbuf, *newbuf = NULL;
+  share_userfile_ready = fn;
+}
 
-  newbuf = (tandbuf *) calloc(1, sizeof(tandbuf));
+void ResyncBuffer::create(const char *bot)
+{
+  ResyncBuffer *newbuf = new ResyncBuffer();
+
   strlcpy(newbuf->bot, bot, sizeof(newbuf->bot));
   newbuf->q = NULL;
   newbuf->timer = now;
-  newbuf->next = *old;
-  *old = newbuf;
+  newbuf->next = tbuf;
+  tbuf = newbuf;
   putlog(LOG_BOTS, "*", "Creating resync buffer for %s", bot);
 }
 
-static void del_tbuf(tandbuf *goner)
+void ResyncBuffer::destroy(tandbuf *goner)
 {
   struct share_msgq *q = NULL, *r = NULL;
   tandbuf *t = NULL, *old = NULL;
@@ -136,22 +153,20 @@ static void del_tbuf(tandbuf *goner)
         free(q->msg);
         free(q);
       }
-      free(t);
+      delete static_cast<ResyncBuffer *>(t);
       break;
     }
   }
 }
 
-/* Flush a certain bot's tbuf.
- */
-static bool flush_tbuf(char *bot)
+bool ResyncBuffer::flush(const char *bot)
 {
   tandbuf *t = NULL, *tnext = NULL;
 
   for (t = tbuf; t; t = tnext) {
     tnext = t->next;
     if (!strcasecmp(t->bot, bot)) {
-      del_tbuf(t);
+      ResyncBuffer::destroy(t);
       return 1;
     }
   }
@@ -188,9 +203,7 @@ static struct share_msgq *q_addmsg(struct share_msgq *qq, const char *s)
   return qq;
 }
 
-/* Add stuff to a specific bot's tbuf.
- */
-static void q_tbuf(const char *bot, const char *s)
+void ResyncBuffer::queue_bot(const char *bot, const char *s)
 {
   struct share_msgq *q = NULL;
   tandbuf *t = NULL;
@@ -203,9 +216,7 @@ static void q_tbuf(const char *bot, const char *s)
     }
 }
 
-/* Add stuff to the resync buffers.
- */
-static void q_resync(const char *s)
+void ResyncBuffer::queue_all(const char *s)
 {
   struct share_msgq *q = NULL;
   tandbuf *t = NULL;
@@ -216,7 +227,7 @@ static void q_resync(const char *s)
   }
 }
 
-static void q_resync_but(const char *s, const char *bot)
+void ResyncBuffer::queue_all_but(const char *s, const char *bot)
 {
   struct share_msgq *q = NULL;
   tandbuf *t = NULL;
@@ -229,9 +240,7 @@ static void q_resync_but(const char *s, const char *bot)
   }
 }
 
-/* Dump the resync buffer for a bot.
- */
-void dump_resync(int idx)
+void ResyncBuffer::dump(int idx)
 {
   struct share_msgq *q = NULL;
   tandbuf *t = NULL;
@@ -241,9 +250,27 @@ void dump_resync(int idx)
       for (q = t->q; q && q->msg[0]; q = q->next) {
         dprintf(idx, "%s", q->msg);
       }
-      flush_tbuf(dcc[idx].nick);
+      ResyncBuffer::flush(dcc[idx].nick);
       break;
     }
+}
+
+void dump_resync(int idx)
+{
+  ResyncBuffer::dump(idx);
+}
+
+void ResyncBuffer::expire()
+{
+  tandbuf *t = NULL, *tnext = NULL;
+
+  for (t = tbuf; t; t = tnext) {
+    tnext = t->next;
+    if ((now - t->timer) > 300) {
+      putlog(LOG_BOTS, "*", "Flushing resync buffer for clonebot %s.", t->bot);
+      ResyncBuffer::destroy(t);
+    }
+  }
 }
 
 /*
@@ -427,8 +454,15 @@ share_chattr(int idx, char *par)
           if (conf.bot->hub) {
             if (!(dcc[idx].status & STAT_GETTING))
               putlog(LOG_CMDS, "@", "%s: chattr %s %s", dcc[idx].nick, hand, s);
+            if (((ofl ^ u->flags) & BOT_CHANHUB) && (u->flags & BOT_CHANHUB))
+              reshare_auth_values();
           } else {
             check_this_user(u->handle, 0, NULL);
+            if ((ofl ^ u->flags) & BOT_CHANHUB) {
+              chatout("*** %s is now a chathub (+c).\n", u->handle);
+              if (ssl_use == 2)
+                chatout("*** Jump to an SSL server for auth/-g to work.\n");
+            }
           }
         }
         noshare = 0;
@@ -641,8 +675,13 @@ share_change(int idx, char *par)
       /* If it's not a supported type, forget it */
       putlog(LOG_ERROR, "*", "Ignore ch %s from %s (unknown type)", key, dcc[idx].nick);
     else {
-      if (!(dcc[idx].status & STAT_GETTING))
-        shareout_but(idx, "c %s %s %s\n", key, hand, par);
+      if (!(dcc[idx].status & STAT_GETTING)) {
+        if (uet == &USERENTRY_SECPASS) {
+          if (u)
+            shareout_secpass(u, idx, "c %s %s %s\n", key, hand, par);
+        } else
+          shareout_but(idx, "c %s %s %s\n", key, hand, par);
+      }
       noshare = 1;
       if (!u && (uet == &USERENTRY_BOTADDR)) {
         char pass[30] = "";
@@ -700,6 +739,11 @@ share_clearhosts(int idx, char *par)
       noshare = 1;
       set_user(&USERENTRY_HOSTS, u, "none");
       noshare = 0;
+      /* Keep a currently-linked bot reachable: re-add its live -telnet!
+       * link host(s); if this is our own record, re-report our IRC mask. */
+      seed_live_link_hosts(u->handle);
+      if (u == conf.bot->u)
+        check_hostmask();
     }
   }
 }
@@ -941,9 +985,9 @@ share_ufyes(int idx, char *par)
       /* Start up a tbuf to queue outgoing changes for this bot until the
        * userlist is done transferring.
        */
-      new_tbuf(dcc[idx].nick);
+      ResyncBuffer::create(dcc[idx].nick);
       /* override shit removed here */
-      q_tbuf(dcc[idx].nick, "s !\n");
+      ResyncBuffer::queue_bot(dcc[idx].nick, "s !\n");
       dcc[idx].status |= STAT_SENDING;
       stream_send_users(idx);
       dump_resync(idx);
@@ -957,7 +1001,7 @@ share_ufyes(int idx, char *par)
 static void
 share_userfileq(int idx, char *par)
 {
-  flush_tbuf(dcc[idx].nick);
+  ResyncBuffer::flush(dcc[idx].nick);
 
   if (bot_aggressive_to(dcc[idx].user)) {
     putlog(LOG_ERRORS, "*", "%s offered user transfer - I'm supposed to be aggressive to it [likely a hack]", dcc[idx].nick);
@@ -1043,6 +1087,7 @@ share_ufsend(int idx, char *par)
       dcc[i].addr = my_atoul(ip);
       dcc[i].port = atoi(port);
       strlcpy(dcc[i].nick, "*users", sizeof(dcc[i].nick));
+      dcc[i].u.xfer->kind = XferKind::Userfile;
       dcc[i].u.xfer->filename = strdup(s);
       dcc[i].u.xfer->origname = dcc[i].u.xfer->filename;
       dcc[i].u.xfer->length = atoi(par);
@@ -1090,6 +1135,9 @@ static void
 share_endstartup(int idx, char *par)
 {
   dcc[idx].status &= ~STAT_GETTING;
+  /* Startup share with this bot just finished: (re)send the current
+   * server-use-ssl mode to it if it is a mode-2-capable peer. */
+  send_ssl_to_child(idx);
   // Share any local changes out
   dump_resync(idx);
   /* Send to any other sharebots */
@@ -1135,7 +1183,7 @@ static void share_userfile_start(int idx, char *par) {
   /* Start up a tbuf to queue outgoing changes for this bot until the
    * userlist is done transferring.
    */
-  new_tbuf(dcc[idx].nick);
+  ResyncBuffer::create(dcc[idx].nick);
   stream_in = new bd::Stream();
 }
 
@@ -1188,7 +1236,7 @@ static botcmd_t C_share[] = {
 
 
 void
-sharein(int idx, char *msg)
+ShareProtocol::dispatch(int idx, char *msg)
 {
   char *code = newsplit(&msg);
   const botcmd_t *cmd = search_botcmd_t((const botcmd_t*)&C_share, code, lengthof(C_share) - 1);
@@ -1196,6 +1244,12 @@ sharein(int idx, char *msg)
     /* Found a match */
     (cmd->func) (idx, msg);
   }
+}
+
+void
+sharein(int idx, char *msg)
+{
+  ShareProtocol::dispatch(idx, msg);
 }
 
 void
@@ -1218,7 +1272,7 @@ shareout(const char *format, ...)
       tputs(dcc[i].sock, s, l + 2);
     }
   }
-  q_resync(s);
+  ResyncBuffer::queue_all(s);
 }
 
 void
@@ -1246,7 +1300,52 @@ shareout_prot(struct userrec *u, const char *format, ...)
       tputs(dcc[i].sock, s, l + 2);
     }
   }
-  q_resync(s);
+  ResyncBuffer::queue_all(s);
+}
+
+/* SECPASS is delivered only to hubs (which forward) and to +c (BOT_CHANHUB)
+ * bots - the peers that can answer a login challenge. */
+void
+shareout_secpass(struct userrec *u, int except, const char *format, ...)
+{
+  char s[601] = "";
+  int l;
+  va_list va;
+
+  va_start(va, format);
+
+  strlcpy(s, "s ", 3);
+  if ((l = egg_vsnprintf(s + 2, 509, format, va)) < 0)
+    s[2 + (l = 509)] = 0;
+  va_end(va);
+
+  for (int i = 0; i < dcc_total; i++) {
+    if (i == except || !dcc[i].type || !(dcc[i].type->flags & DCT_BOT))
+      continue;
+
+    if (!(dcc[i].hub || (dcc[i].user && (dcc[i].user->flags & BOT_CHANHUB))))
+      continue;
+
+    ResyncBuffer::queue_bot(dcc[i].nick, s);
+    if ((dcc[i].status & STAT_SHARE) && !(dcc[i].status & (STAT_GETTING | STAT_SENDING)))
+      tputs(dcc[i].sock, s, l + 2);
+  }
+}
+
+/* Re-send the credentials needed to answer auth - the per-user SECPASS entries
+ * and the global auth-key - to the currently-allowed peers. Used when a bot
+ * gains +c so it can answer auth without waiting for a relink. */
+void
+reshare_auth_values(void)
+{
+  for (struct userrec *u = userlist; u; u = u->next) {
+    const char *sp = (const char *) get_user(&USERENTRY_SECPASS, u);
+
+    if (sp && sp[0])
+      shareout_secpass(u, -1, "c SECPASS %s %s\n", u->handle, sp);
+  }
+
+  distribute_authkey_var();
 }
 
 void
@@ -1271,7 +1370,7 @@ shareout_hub(const char *format, ...)
       tputs(dcc[i].sock, s, l + 2);
     }
   }
-  q_resync(s);
+  ResyncBuffer::queue_all(s);
 }
 
 static void
@@ -1295,7 +1394,7 @@ shareout_but(int x, const char *format, ...)
       tputs(dcc[i].sock, s, l + 2);
     }
   }
-  q_resync_but(s, dcc[x].nick);
+  ResyncBuffer::queue_all_but(s, dcc[x].nick);
 }
 
 /* Flush all tbufs older than 15 minutes.
@@ -1303,16 +1402,8 @@ shareout_but(int x, const char *format, ...)
 static void
 check_expired_tbufs()
 {
-  tandbuf *t = NULL, *tnext = NULL;
+  ResyncBuffer::expire();
 
-  for (t = tbuf; t; t = tnext) {
-    tnext = t->next;
-    if ((now - t->timer) > 300) {
-      putlog(LOG_BOTS, "*", "Flushing resync buffer for clonebot %s.", t->bot);
-      del_tbuf(t);
-    }
-  }
- 
   /* Resend userfile requests */
   for (int i = 0; i < dcc_total; i++) {
     if (dcc[i].type && dcc[i].type->flags & DCT_BOT) {
@@ -1492,7 +1583,8 @@ static void share_read_stream(int idx, bd::Stream& stream) {
   /* If this is ever changed, do mind the restarting bool as it will prevent 001 from dumping JOINs.. */
   if (reset_chans) {
     if (reset_chans == 2) {
-      irc_init();
+      if (share_userfile_ready)
+        share_userfile_ready();
       putlog(LOG_DEBUG, "*", "Resetting channel info for all channels...");
       for (chan = chanset; chan; chan = chan->next) {
         if (shouldjoin(chan) && channel_pending(chan)) { // Set when reading socksfile
@@ -1525,7 +1617,11 @@ stream_send_users(int idx)
   /* FIXME: Remove after 1.2.15 */
   if (idx != -1 && !(dcc[idx].u.bot->uff_flags & UFF_CHDEFAULT)) /* channel 'default' */
     old = 2;
-  stream_writeuserfile(stream, userlist, old);
+  /* Translate server-use-ssl for peers too old to understand mode 2. */
+  int peer_numver = (idx != -1 && dcc[idx].u.bot) ? dcc[idx].u.bot->numver : -1;
+  userfile_write_context(idx != -1 &&
+      (dcc[idx].hub || (dcc[idx].user && (dcc[idx].user->flags & BOT_CHANHUB))));
+  stream_writeuserfile(stream, userlist, old, peer_numver);
   stream.seek(0, SEEK_SET);
   dprintf(idx, "s ls\n");
   bd::String buf;
@@ -1541,7 +1637,8 @@ static void
 start_sending_users(int idx)
 {
   char share_file[1024] = "";
-  int i = 1, j = -1;
+  DccSendResult res = DccSendResult::Ok;
+  int j = -1;
 
   char rand[7] = "";
   make_rand_str(rand, sizeof(rand) - 1, 0);
@@ -1561,7 +1658,11 @@ start_sending_users(int idx)
 
   const char salt1[] = SALT1;
   EncryptedStream stream(salt1);
-  stream_writeuserfile(stream, userlist, old);
+  /* Translate server-use-ssl for peers too old to understand mode 2. */
+  int peer_numver = (idx != -1 && dcc[idx].u.bot) ? dcc[idx].u.bot->numver : -1;
+  userfile_write_context(idx != -1 &&
+      (dcc[idx].hub || (dcc[idx].user && (dcc[idx].user->flags & BOT_CHANHUB))));
+  stream_writeuserfile(stream, userlist, old, peer_numver);
   stream.setFlags(ENC_KEEP_NEWLINES|ENC_AES_256_ECB|ENC_BASE64_BROKEN|ENC_NO_HEADER);
   if (stream.writeFile(share_file)) {
     putlog(LOG_MISC, "*", "ERROR writing user file to transfer.");
@@ -1578,14 +1679,14 @@ start_sending_users(int idx)
   }
 */
 
-  if ((i = raw_dcc_send(share_file, "*users", "(users)", &j)) > 0) {
+  if ((res = raw_dcc_send(share_file, "*users", "(users)", &j)) != DccSendResult::Ok) {
     /* FIXME: the bot should be unlinked at this point */
     unlink(share_file);
     dprintf(idx, "s e %s\n", "Can't send userfile to you (internal error)");
     putlog(LOG_BOTS, "*", "%s -- can't send userfile",
-           i == DCCSEND_FULL ? "NO MORE DCC CONNECTIONS" :
-           i == DCCSEND_NOSOCK ? "CAN'T OPEN A LISTENING SOCKET" :
-           i == DCCSEND_BADFN ? "BAD FILE" : i == DCCSEND_FEMPTY ? "EMPTY FILE" : "UNKNOWN REASON!");
+           res == DccSendResult::Full ? "NO MORE DCC CONNECTIONS" :
+           res == DccSendResult::NoSock ? "CAN'T OPEN A LISTENING SOCKET" :
+           res == DccSendResult::BadFn ? "BAD FILE" : res == DccSendResult::FEmpty ? "EMPTY FILE" : "UNKNOWN REASON!");
     dcc[idx].status &= ~(STAT_SHARE | STAT_SENDING | STAT_AGGRESSIVE);
   } else {
     updatebot(-1, dcc[idx].nick, '+', 0, 0, 0, NULL, -1);
@@ -1595,9 +1696,9 @@ start_sending_users(int idx)
     /* Start up a tbuf to queue outgoing changes for this bot until the
      * userlist is done transferring.
      */
-    new_tbuf(dcc[idx].nick);
+    ResyncBuffer::create(dcc[idx].nick);
     /* override shit removed here */
-    q_tbuf(dcc[idx].nick, "s !\n");
+    ResyncBuffer::queue_bot(dcc[idx].nick, "s !\n");
     /* Unlink the file. We don't really care whether this causes problems
      * for NFS setups. It's not worth the trouble.
      */
@@ -1615,7 +1716,7 @@ cancel_user_xfer(int idx, void *x)
     /* turn off sharing flag */
     updatebot(-1, dcc[idx].nick, '-', 0, 0, 0, NULL, -1);
   }
-  flush_tbuf(dcc[idx].nick);
+  ResyncBuffer::flush(dcc[idx].nick);
 
   if (dcc[idx].status & STAT_SHARE) {
     /* look for any transfers from this bot and kill them */
@@ -1699,7 +1800,7 @@ share_report(int idx, int details)
 }
 
 void
-share_init()
+ShareModule::init()
 {
   if (conf.bot->hub)
     timer_create_secs(60, "check_expired_tbufs", (Function) check_expired_tbufs);

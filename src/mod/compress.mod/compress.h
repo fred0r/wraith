@@ -2,6 +2,12 @@
  * compress.h -- part of src/mod/compress.mod
  *   header file for the zlib compression module
  *
+ * VESTIGIAL / DEPRECATED: this module is not built (compress.So is not
+ * in src/Makefile.in OBJS) and its only former call site (the userfile
+ * send path in share.mod) has been commented out for years. compress.cc
+ * also references the UFF table framework (uff_table_t/uff_addtable)
+ * that no longer exists elsewhere in the tree, so it would not compile
+ * if added to the build. Kept for historical reference only.
  */
 /*
  * Copyright (C) 2000, 2001, 2002 Eggheads Development Team

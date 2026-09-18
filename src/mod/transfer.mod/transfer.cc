@@ -38,6 +38,7 @@
 #include "src/tandem.h"
 #include "src/net.h"
 #include "src/users.h"
+#include "src/dcc_handler.h"
 
 #define MAKING_TRANSFER
 #include "transfer.h"
@@ -54,7 +55,6 @@
 #include <arpa/inet.h>
 #include <errno.h>
 
-extern int		bupdating;
 
 static interval_t wait_dcc_xfer = 40;	/* Timeout time on DCC xfers */
 static int dcc_limit = 4;	/* Maximum number of simultaneous file
@@ -65,6 +65,16 @@ static unsigned int dcc_block = 0;	/* Size of one dcc block */
  * Prototypes
  */
 static void dcc_get_pending(int, char *, int);
+static void dcc_fork_send(int, char *, int);
+
+static XferKind xfer_kind_for_nick(const char *nick)
+{
+  if (!strcmp(nick, "*users"))
+    return XferKind::Userfile;
+  if (!strcmp(nick, "*binary"))
+    return XferKind::Binary;
+  return XferKind::File;
+}
 
 
 /*
@@ -111,7 +121,7 @@ static unsigned long pump_file_to_sock(FILE *file, long sock,
 static void eof_dcc_fork_send(int idx)
 {
   fclose(dcc[idx].u.xfer->f);
-  if (!strcmp(dcc[idx].nick, "*users")) {
+  if (dcc[idx].u.xfer->kind == XferKind::Userfile) {
     int x, y = -1;
 
     for (x = 0; x < dcc_total; x++)
@@ -125,7 +135,7 @@ static void eof_dcc_fork_send(int idx)
     }
     putlog(LOG_BOTS, "*", "Failed connection; aborted userfile transfer.");
     unlink(dcc[idx].u.xfer->filename);
-  } else if (!strcmp(dcc[idx].nick, "*binary")) {
+  } else if (dcc[idx].u.xfer->kind == XferKind::Binary) {
     int x, y = -1;
 
     for (x = 0; x < dcc_total; x++)
@@ -152,12 +162,12 @@ static void eof_dcc_send(int idx)
   
   fclose(dcc[idx].u.xfer->f);
   if (dcc[idx].u.xfer->length == dcc[idx].status) {
-    if (!strcmp(dcc[idx].nick, "*users")) {
+    if (dcc[idx].u.xfer->kind == XferKind::Userfile) {
       finish_share(idx);
       killsock(dcc[idx].sock);
       lostdcc(idx);
       return;
-    } else if (!strcmp(dcc[idx].nick, "*binary")) {
+    } else if (dcc[idx].u.xfer->kind == XferKind::Binary) {
       finish_update(idx);
       killsock(dcc[idx].sock);
       lostdcc(idx);
@@ -165,7 +175,7 @@ static void eof_dcc_send(int idx)
     }
   }
   /* Failure :( */
-  if (!strcmp(dcc[idx].nick, "*users")) {
+  if (dcc[idx].u.xfer->kind == XferKind::Userfile) {
     int x, y = -1;
 
     for (x = 0; x < dcc_total; x++) {
@@ -197,7 +207,7 @@ static void eof_dcc_send(int idx)
       killsock(dcc[idx].sock);
       lostdcc(idx);
     }
-  } else if (!strcmp(dcc[idx].nick, "*binary")) {
+  } else if (dcc[idx].u.xfer->kind == XferKind::Binary) {
     int x, y = -1;
 
     for (x = 0; x < dcc_total; x++)
@@ -218,6 +228,8 @@ static void eof_dcc_send(int idx)
        lostdcc(y);
       }
 */
+      dcc[y].status &= ~STAT_SENDINGU;
+      UpdateModule::set_bupdating(false);
       killsock(dcc[idx].sock);
       lostdcc(idx);
     }
@@ -327,9 +339,9 @@ static void dcc_get(int idx, char *buf, int len)
 	   dcc[idx].u.xfer->origname, dcc[idx].nick);
   } else if (cmp > dcc[idx].status) {
     /* Attempt to resume */
-    if (!strcmp(dcc[idx].nick, "*users")) {
+    if (dcc[idx].u.xfer->kind == XferKind::Userfile) {
       putlog(LOG_BOTS, "*", "!!! Trying to skip ahead on userfile transfer");
-    } else if (!strcmp(dcc[idx].nick, "*binary")) {
+    } else if (dcc[idx].u.xfer->kind == XferKind::Binary) {
       putlog(LOG_BOTS, "*","!!! Trying to skip ahead on binary transfer");
     }
   } else {
@@ -353,7 +365,7 @@ static void dcc_get(int idx, char *buf, int len)
     /* Successful send, we are done */
     killsock(dcc[idx].sock);
     fclose(dcc[idx].u.xfer->f);
-    if (!strcmp(dcc[idx].nick, "*users")) {
+    if (dcc[idx].u.xfer->kind == XferKind::Userfile) {
       int x, y = -1;
 
       for (x = 0; x < dcc_total; x++)
@@ -368,7 +380,7 @@ static void dcc_get(int idx, char *buf, int len)
       unlink(dcc[idx].u.xfer->filename);
       /* Any sharebot things that were queued: */
       dump_resync(y);
-    } else if (!strcmp(dcc[idx].nick, "*binary")) {
+    } else if (dcc[idx].u.xfer->kind == XferKind::Binary) {
       int x, y = -1;
 
       for (x = 0; x < dcc_total; x++)
@@ -377,11 +389,11 @@ static void dcc_get(int idx, char *buf, int len)
           break;
         }
       if (y >= 0) {
-	dcc[y].status &= ~STAT_SENDINGU;
+    dcc[y].status &= ~STAT_GETTINGU;
         dcc[y].status |= STAT_UPDATED;
       }
       putlog(LOG_BOTS, "*", "Completed binary file send to %s", dcc[y].nick);
-      bupdating = 0;
+      UpdateModule::set_bupdating(false);
     }
     lostdcc(idx);
     return;
@@ -401,7 +413,7 @@ static void eof_dcc_get(int idx)
   char s[1024] = "";
 
   fclose(dcc[idx].u.xfer->f);
-  if (!strcmp(dcc[idx].nick, "*users")) {
+  if (dcc[idx].u.xfer->kind == XferKind::Userfile) {
     int x, y = -1;
 
     for (x = 0; x < dcc_total; x++)
@@ -425,7 +437,7 @@ static void eof_dcc_get(int idx)
       killsock(dcc[idx].sock);
     lostdcc(idx);
     return;
-  } else if (!strcmp(dcc[idx].nick, "*binary")) {
+  } else if (dcc[idx].u.xfer->kind == XferKind::Binary) {
     int x, y = -1;
 
     for (x = 0; x < dcc_total; x++)
@@ -437,7 +449,7 @@ static void eof_dcc_get(int idx)
     /* Note: no need to unlink the xfer file, as it's already unlinked. */
     /* Drop that bot */
     dcc[y].status &= ~STAT_SENDINGU;
-    bupdating = 0;
+    UpdateModule::set_bupdating(false);
 /*
     dprintf(-dcc[y].sock, "bye\n");
     simple_snprintf(s, sizeof s, "Disconnected %s (aborted binary transfer)",
@@ -512,7 +524,7 @@ static void transfer_get_timeout(int i)
   char xx[1024] = "";
 
   fclose(dcc[i].u.xfer->f);
-  if (strcmp(dcc[i].nick, "*users") == 0) {
+  if (dcc[i].u.xfer->kind == XferKind::Userfile) {
     int x, y = -1;
 
     for (x = 0; x < dcc_total; x++)
@@ -542,7 +554,7 @@ static void transfer_get_timeout(int i)
     killsock(dcc[y].sock);
     lostdcc(y);
     xx[0] = 0;
-  } else if (strcmp(dcc[i].nick, "*binary") == 0) {
+  } else if (dcc[i].u.xfer->kind == XferKind::Binary) {
     int x, y = -1;
 
     for (x = 0; x < dcc_total; x++)
@@ -579,7 +591,7 @@ static void transfer_get_timeout(int i)
 static void tout_dcc_send(int idx)
 {
   fclose(dcc[idx].u.xfer->f);
-  if (!strcmp(dcc[idx].nick, "*users")) {
+  if (dcc[idx].u.xfer->kind == XferKind::Userfile) {
     int x, y = -1;
 
     for (x = 0; x < dcc_total; x++)
@@ -593,7 +605,7 @@ static void tout_dcc_send(int idx)
     }
     unlink(dcc[idx].u.xfer->filename);
     putlog(LOG_BOTS, "*", "Timeout on userfile transfer.");
-  } else if (!strcmp(dcc[idx].nick, "*binary")) {
+  } else if (dcc[idx].u.xfer->kind == XferKind::Binary) {
     int x, y = -1;
 
     for (x = 0; x < dcc_total; x++)
@@ -662,34 +674,71 @@ static void outdone_dcc_xfer(int idx)
 			      dcc[idx].u.xfer->block_pending);
 }
 
+class DccXferHandler : public wraith::DccHandler {
+public:
+  void on_kill(int idx, void *x) override { kill_dcc_xfer(idx, x); }
+  void on_output(int idx, char *buf, void *x) override { out_dcc_xfer(idx, buf, x); }
+};
+
+class DccSendHandler : public DccXferHandler {
+public:
+  void on_eof(int idx) override { eof_dcc_send(idx); }
+  void on_activity(int idx, char *buf, int len) override { dcc_send(idx, buf, len); }
+  void on_timeout(int idx) override { tout_dcc_send(idx); }
+  void on_display(int idx, char *buf, size_t bufsiz) override { display_dcc_send(idx, buf, bufsiz); }
+};
+
+class DccForkSendHandler : public DccXferHandler {
+public:
+  void on_eof(int idx) override { eof_dcc_fork_send(idx); }
+  void on_activity(int idx, char *x, int y) override { dcc_fork_send(idx, x, y); }
+  void on_timeout(int idx) override { eof_dcc_fork_send(idx); }
+  void on_display(int idx, char *buf, size_t bufsiz) override { display_dcc_fork_send(idx, buf, bufsiz); }
+};
+
+class DccGetHandler : public DccXferHandler {
+public:
+  void on_eof(int idx) override { eof_dcc_get(idx); }
+  void on_activity(int idx, char *buf, int len) override { dcc_get(idx, buf, len); }
+  void on_timeout(int idx) override { transfer_get_timeout(idx); }
+  void on_display(int idx, char *buf, size_t bufsiz) override { display_dcc_get(idx, buf, bufsiz); }
+  void on_outdone(int idx) override { outdone_dcc_xfer(idx); }
+};
+
+class DccGetPendingHandler : public DccXferHandler {
+public:
+  void on_eof(int idx) override { eof_dcc_get(idx); }
+  void on_activity(int idx, char *buf, int len) override { dcc_get_pending(idx, buf, len); }
+  void on_timeout(int idx) override { transfer_get_timeout(idx); }
+  void on_display(int idx, char *buf, size_t bufsiz) override { display_dcc_get_p(idx, buf, bufsiz); }
+};
+
 struct dcc_table DCC_SEND =
 {
   "SEND",
   DCT_FILETRAN | DCT_FILESEND | DCT_VALIDIDX,
-  eof_dcc_send,
-  dcc_send,
+  &wraith::DccTableAdapter<DccSendHandler>::eof,
+  &wraith::DccTableAdapter<DccSendHandler>::activity,
   &wait_dcc_xfer,
-  tout_dcc_send,
-  display_dcc_send,
-  kill_dcc_xfer,
-  out_dcc_xfer,
-  NULL
+  &wraith::DccTableAdapter<DccSendHandler>::timeout,
+  &wraith::DccTableAdapter<DccSendHandler>::display,
+  &wraith::DccTableAdapter<DccSendHandler>::kill,
+  &wraith::DccTableAdapter<DccSendHandler>::output,
+  &wraith::DccTableAdapter<DccSendHandler>::outdone
 };
-
-static void dcc_fork_send(int idx, char *x, int y);
 
 struct dcc_table DCC_FORK_SEND =
 {
   "FORK_SEND",
   DCT_FILETRAN | DCT_FORKTYPE | DCT_FILESEND | DCT_VALIDIDX,
-  eof_dcc_fork_send,
-  dcc_fork_send,
+  &wraith::DccTableAdapter<DccForkSendHandler>::eof,
+  &wraith::DccTableAdapter<DccForkSendHandler>::activity,
   &wait_dcc_xfer,
-  eof_dcc_fork_send,
-  display_dcc_fork_send,
-  kill_dcc_xfer,
-  out_dcc_xfer,
-  NULL
+  &wraith::DccTableAdapter<DccForkSendHandler>::timeout,
+  &wraith::DccTableAdapter<DccForkSendHandler>::display,
+  &wraith::DccTableAdapter<DccForkSendHandler>::kill,
+  &wraith::DccTableAdapter<DccForkSendHandler>::output,
+  &wraith::DccTableAdapter<DccForkSendHandler>::outdone
 };
 
 static void dcc_fork_send(int idx, char *x, int y)
@@ -703,7 +752,7 @@ static void dcc_fork_send(int idx, char *x, int y)
   dcc[idx].status = 0;
   dcc[idx].u.xfer->start_time = now;
   simple_snprintf(s1, sizeof s1, "%s!%s", dcc[idx].nick, dcc[idx].host);
-  if (strcmp(dcc[idx].nick, "*users") && strcmp(dcc[idx].nick, "*binary"))
+  if (dcc[idx].u.xfer->kind == XferKind::File)
     putlog(LOG_MISC, "*", "DCC connection: SEND %s (%s)", dcc[idx].u.xfer->origname, s1);
 }
 
@@ -711,28 +760,28 @@ struct dcc_table DCC_GET =
 {
   "GET",
   DCT_FILETRAN | DCT_VALIDIDX,
-  eof_dcc_get,
-  dcc_get,
+  &wraith::DccTableAdapter<DccGetHandler>::eof,
+  &wraith::DccTableAdapter<DccGetHandler>::activity,
   &wait_dcc_xfer,
-  transfer_get_timeout,
-  display_dcc_get,
-  kill_dcc_xfer,
-  out_dcc_xfer,
-  outdone_dcc_xfer,
+  &wraith::DccTableAdapter<DccGetHandler>::timeout,
+  &wraith::DccTableAdapter<DccGetHandler>::display,
+  &wraith::DccTableAdapter<DccGetHandler>::kill,
+  &wraith::DccTableAdapter<DccGetHandler>::output,
+  &wraith::DccTableAdapter<DccGetHandler>::outdone,
 };
 
 struct dcc_table DCC_GET_PENDING =
 {
   "GET_PENDING",
   DCT_FILETRAN | DCT_VALIDIDX,
-  eof_dcc_get,
-  dcc_get_pending,
+  &wraith::DccTableAdapter<DccGetPendingHandler>::eof,
+  &wraith::DccTableAdapter<DccGetPendingHandler>::activity,
   &wait_dcc_xfer,
-  transfer_get_timeout,
-  display_dcc_get_p,
-  kill_dcc_xfer,
-  out_dcc_xfer,
-  NULL
+  &wraith::DccTableAdapter<DccGetPendingHandler>::timeout,
+  &wraith::DccTableAdapter<DccGetPendingHandler>::display,
+  &wraith::DccTableAdapter<DccGetPendingHandler>::kill,
+  &wraith::DccTableAdapter<DccGetPendingHandler>::output,
+  &wraith::DccTableAdapter<DccGetPendingHandler>::outdone
 };
 
 static void dcc_get_pending(int idx, char *buf, int len)
@@ -810,7 +859,7 @@ static void dcc_get_pending(int idx, char *buf, int len)
  * Use raw_dcc_resend() and raw_dcc_send() instead of this function.
  */
 
-static int raw_dcc_resend_send(const char *filename, const char *nick,
+static DccSendResult raw_dcc_resend_send(const char *filename, const char *nick,
     const char *from, int resend, int *idx)
 {
   int zz = -1;
@@ -824,14 +873,14 @@ static int raw_dcc_resend_send(const char *filename, const char *nick,
   dccfile = fopen(filename, "rb");
   if (!dccfile) {
     putlog(LOG_MISC, "*", "Failed to open %s: %s", filename, strerror(errno));
-    return DCCSEND_FEMPTY;
+    return DccSendResult::FEmpty;
   }
   fseek(dccfile, 0, SEEK_END);
   dccfilesize = ftell(dccfile);
   fclose(dccfile);
   /* File empty?! */
   if (dccfilesize == 0)
-    return DCCSEND_FEMPTY;
+    return DccSendResult::FEmpty;
 
   if (conf.portmin > 0 && conf.portmin < conf.portmax) {
     for (port = conf.portmin; port <= conf.portmax; port++)
@@ -851,17 +900,18 @@ static int raw_dcc_resend_send(const char *filename, const char *nick,
   }
 
   if (zz == (-1))
-    return DCCSEND_NOSOCK;
+    return DccSendResult::NoSock;
   
   if ((i = new_dcc(&DCC_GET_PENDING, sizeof(struct xfer_info))) == -1)
-     return DCCSEND_FULL;
+     return DccSendResult::Full;
   f = fopen(filename, "rb");
   if (!f)
-    return DCCSEND_BADFN;
+    return DccSendResult::BadFn;
   dcc[i].sock = zz;
   dcc[i].addr = (in_addr_t) (-559026163);
   dcc[i].port = port;
   strlcpy(dcc[i].nick, nick, sizeof(dcc[i].nick));
+  dcc[i].u.xfer->kind = xfer_kind_for_nick(nick);
   strlcpy(dcc[i].host, "irc", sizeof(dcc[i].host));
   dcc[i].u.xfer->filename = strdup(filename);
   dcc[i].u.xfer->origname = strdup(filename);
@@ -876,7 +926,7 @@ static int raw_dcc_resend_send(const char *filename, const char *nick,
 
   if (idx)
     *idx = i;
-  return DCCSEND_OK;
+  return DccSendResult::Ok;
 }
 
 /* Starts a DCC RESEND connection.
@@ -890,7 +940,7 @@ static int raw_dcc_resend(char *filename, char *nick, char *from, char *dir)
 
 /* Starts a DCC_SEND connection.
  */
-int raw_dcc_send(const char *filename, const char *nick, const char *from, int *idx)
+DccSendResult raw_dcc_send(const char *filename, const char *nick, const char *from, int *idx)
 {
   return raw_dcc_resend_send(filename, nick, from, 0, idx);
 }

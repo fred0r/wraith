@@ -49,7 +49,6 @@
 
 
 #include "src/mod/transfer.mod/transfer.h"
-#include "src/mod/compress.mod/compress.h"
 
 
 /* Prototypes */
@@ -62,12 +61,48 @@ extern struct dcc_table DCC_FORK_SEND, DCC_GET;
 
 
 static bd::Stream stream_in;
-int bupdating = 0;
-int updated = 0;
+
+bool UpdateModule::bupdating_ = false;
+bool UpdateModule::updated_ = false;
+int UpdateModule::cnt_ = 0;
+
+bool UpdateModule::is_bupdating() { return bupdating_; }
+void UpdateModule::set_bupdating(bool value) { bupdating_ = value; }
+bool UpdateModule::is_updated() { return updated_; }
+void UpdateModule::set_updated(bool value) { updated_ = value; }
+int UpdateModule::tick() { return ++cnt_; }
+void UpdateModule::reset_tick() { cnt_ = 0; }
+
+#define STREAM_CHUNKS_PER_TICK 64
+
+static struct {
+  int idx;
+  bd::Stream stream;
+  bool active;
+} stream_state = { -1, {}, false };
 
 /*
  *   Botnet commands
  */
+
+static bool is_encrypted_link(int idx)
+{
+  int snum = findanysnum(dcc[idx].sock);
+  if (snum < 0 || socklist[snum].enclink < 0)
+    return false;
+  int type = enclink[socklist[snum].enclink].type;
+
+  /* cleartext allowed — accept for migration from 1.4.x */
+  if (type == LINK_CLEARTEXT && link_cleartext)
+    return true;
+
+  /* 1.5.x bots must use ChaCha20-Poly1305 */
+  if (dcc[idx].u.bot && dcc[idx].u.bot->numver >= 1005000)
+    return (type == LINK_CHACHA20_POLY1305);
+
+  /* 1.4.x bots: legacy AES-256-ECB botlink is the encrypted type */
+  return (type == LINK_GHOSTCASE3);
+}
 
 static void update_ufno(int idx, char *par)
 {
@@ -79,18 +114,24 @@ static void update_ufno(int idx, char *par)
 static void update_ufyes(int idx, char *par)
 {
   if (dcc[idx].status & STAT_OFFEREDU) {
-    // Disable update streaming until it is deemed necesary - way too slow currently
-    if (0 && strstr(par, "stream")) {
-      start_sending_binary(idx, 1);
+    if (is_encrypted_link(idx)) {
+      int snum = findanysnum(dcc[idx].sock);
+      int type = enclink[socklist[snum].enclink].type;
+      if (type == LINK_CHACHA20_POLY1305)
+        start_sending_binary(idx, 1);  /* stream via encrypted botlink */
+      else
+        start_sending_binary(idx, 0);  /* DCC for 1.4.x (AES botlink) */
     } else {
-      start_sending_binary(idx, 0);
+      putlog(LOG_BOTS, "*", "Cannot send binary to %s: no encrypted link", dcc[idx].nick);
+      dcc[idx].status &= ~STAT_OFFEREDU;
+      UpdateModule::set_bupdating(false);
     }
   }
 }
 
 static void update_fileq(int idx, char *par)
 {
-  if (dcc[idx].status & STAT_GETTINGU || updated) 
+  if (dcc[idx].status & STAT_GETTINGU || UpdateModule::is_updated()) 
     return;
 
   if (!dcc[idx].hub) {
@@ -110,6 +151,12 @@ static void update_fileq(int idx, char *par)
     }
   }
 
+  if (!is_encrypted_link(idx)) {
+    putlog(LOG_BOTS, "*", "Rejecting binary offer from %s: unencrypted link", dcc[idx].nick);
+    dprintf(idx, "sb un Encrypted link required for binary updates.\n");
+    return;
+  }
+
   dprintf(idx, "sb uy stream\n");
 }
 
@@ -121,6 +168,13 @@ static void update_ufsend(int idx, char *par)
     putlog(LOG_ERRORS, "*", "%s attempted to initiate binary transfer - they are not a hub [likely a hack]", dcc[idx].nick);
     dprintf(idx, "s un You are not allowed to send me binaries.\n");
     botunlink(-2, dcc[idx].nick, "You are not allowed to send me binaries.");
+    return;
+  }
+
+  if (!is_encrypted_link(idx)) {
+    putlog(LOG_BOTS, "*", "Rejecting binary DCC from %s: unencrypted link", dcc[idx].nick);
+    dprintf(idx, "sb e Encrypted link required for binary updates.\n");
+    zapfbot(idx);
     return;
   }
 
@@ -150,6 +204,7 @@ static void update_ufsend(int idx, char *par)
     if (sock < 0 || (open_telnet_return = open_telnet_dcc(sock, ip, port)) < 0) {
       if (open_telnet_return != -1 && sock != -1)
         killsock(sock);
+      fclose(f);
       putlog(LOG_BOTS, "*", "Asynchronous connection failed!");
       dprintf(idx, "sb e Can't connect to you!\n");
       zapfbot(idx);
@@ -159,6 +214,7 @@ static void update_ufsend(int idx, char *par)
       dcc[i].addr = my_atoul(ip);
       dcc[i].port = atoi(port);
       strlcpy(dcc[i].nick, "*binary", sizeof(dcc[i].nick));
+      dcc[i].u.xfer->kind = XferKind::Binary;
       dcc[i].u.xfer->filename = strdup(s);
       dcc[i].u.xfer->origname = dcc[i].u.xfer->filename;
       dcc[i].u.xfer->length = atol(par);
@@ -198,6 +254,17 @@ static void update_stream_end(int idx, char *par) {
   }
   stream_in.seek(0, SEEK_SET);
   finish_update_stream(idx, stream_in);
+  dcc[idx].status &= ~STAT_GETTINGU;
+}
+
+static void update_ues(int idx, char *par)
+{
+  if (!strcasecmp(par, "ok")) {
+    putlog(LOG_BOTS, "*", "Binary update accepted by %s", dcc[idx].nick);
+  } else {
+    putlog(LOG_BOTS, "*", "Binary update rejected by %s: %s", dcc[idx].nick, par);
+    dcc[idx].status &= ~STAT_UPDATED;
+  }
 }
 
 /* Note: these MUST be sorted. */
@@ -207,6 +274,7 @@ static botcmd_t C_update[] =
   {"le", 	update_stream_end, 0},
   {"ls", 	update_stream_start, 0},
   {"u?",	update_fileq, 0},
+  {"ue",	update_ues, 0},
   {"un",	update_ufno, 0},
   {"us",	update_ufsend, 0},
   {"uy",	update_ufyes, 0},
@@ -215,7 +283,7 @@ static botcmd_t C_update[] =
 
 static void got_nu(char *botnick, char *code, char *par)
 {
-  if (!par || !*par || updated) 
+  if (!par || !*par || UpdateModule::is_updated()) 
     return;
 
   if (!is_hub(botnick)) {
@@ -284,19 +352,22 @@ void finish_update_stream(int idx, bd::Stream& stream)
   putlog(LOG_DEBUG, "*", "Update binary is %zu bytes.", stream.length());
   putlog(LOG_MISC, "*", "Updating with binary: %s", buf2);
   
-  if (updatebin(-1, buf2, 120)) {
+  if (updatebin(idx, buf2, 120)) {
     putlog(LOG_MISC, "*", "Failed to update to new binary..");
+    dprintf(idx, "sb ue fail\n");
     unlink(buf2);
-  } else
-    updated = 1;
+  } else {
+    UpdateModule::set_updated(true);
+    dprintf(idx, "sb ue ok\n");
+  }
 }
 
 static void
 ulsend(int idx, const char* data, size_t datalen)
 {
-  char buf[1400] = "";
+  char buf[2100] = "";
 
-  size_t len = simple_snprintf(buf, sizeof(buf), "sb l %zu %s", datalen-1, data);/* -1 for newline */
+  size_t len = simple_snprintf(buf, sizeof(buf), "sb l %zu %s", datalen, data);
   tputs(dcc[idx].sock, buf, len);
 }
 
@@ -307,16 +378,55 @@ void finish_update(int idx) {
   finish_update_stream(idx, stream);
 }
 
+static void stream_continue(void *)
+{
+  if (!stream_state.active)
+    return;
+
+  int idx = stream_state.idx;
+
+  if (!dcc[idx].type) {
+    putlog(LOG_BOTS, "*", "Binary stream to %s: bot disconnected, aborting",
+           dcc[idx].nick);
+    stream_state.active = false;
+    UpdateModule::set_bupdating(false);
+    return;
+  }
+
+  int chunks = 0;
+  while (stream_state.stream.tell() < stream_state.stream.length() &&
+         chunks < STREAM_CHUNKS_PER_TICK &&
+         !sock_has_data(SOCK_DATA_OUTGOING, dcc[idx].sock)) {
+    bd::String buf = bd::base64Encode(stream_state.stream.read(1024));
+    ulsend(idx, buf.c_str(), buf.length());
+    chunks++;
+  }
+
+  if (stream_state.stream.tell() >= stream_state.stream.length()) {
+    dprintf(idx, "sb le\n");
+    putlog(LOG_BOTS, "*", "Completed binary file send to %s", dcc[idx].nick);
+    dcc[idx].status &= ~STAT_SENDINGU;
+    dcc[idx].status |= STAT_UPDATED;
+    UpdateModule::set_bupdating(false);
+    stream_state.active = false;
+  } else {
+    egg_timeval_t howlong = { 0, 100000 };
+    timer_create_complex(&howlong, "stream_chunk",
+                         (Function) stream_continue, NULL, 0);
+  }
+}
+
 static void start_sending_binary(int idx, bool streamable)
 {
   /* module_entry *me; */
   char update_file[51] = "", update_fpath[DIRMAX] = "", *sysname = NULL;
-  int i = 1, j = -1;
+  DccSendResult res = DccSendResult::Ok;
+  int j = -1;
 
   dcc[idx].status &= ~(STAT_OFFEREDU | STAT_SENDINGU);
 
-  if (bupdating) return;
-  bupdating = 1;
+  if (UpdateModule::is_bupdating()) return;
+  UpdateModule::set_bupdating(true);
 
   dcc[idx].status |= STAT_SENDINGU;
 
@@ -326,6 +436,7 @@ static void start_sending_binary(int idx, bool streamable)
 
   if (!sysname || !sysname[0] || !strcmp("*", sysname)) {
     putlog(LOG_MISC, "*", "Cannot update \002%s\002 automatically, `uname` not returning os name.", dcc[idx].nick);
+    UpdateModule::set_bupdating(false);
     return;
   }
 
@@ -339,55 +450,65 @@ static void start_sending_binary(int idx, bool streamable)
     putlog(LOG_MISC, "*", "Need to update \002%s\002 with %s but there was an error: %s", dcc[idx].nick, update_fpath,
                            strerror(errno));
     dcc[idx].status &= ~(STAT_SENDINGU);
-    bupdating = 0;
+    UpdateModule::set_bupdating(false);
     return;
   }
 
   if (streamable) {
     dcc[idx].status |= STAT_SENDINGU;
 
-    bd::Stream stream;
-    stream.loadFile(update_fpath);
+    stream_state.stream.loadFile(update_fpath);
+    stream_state.stream.seek(0, SEEK_SET);
+    stream_state.idx = idx;
+    stream_state.active = true;
     dprintf(idx, "sb ls\n");
-    bd::String buf;
-    while (stream.tell() < stream.length()) {
-      buf = bd::base64Encode(stream.read(1024));
-      ulsend(idx, buf.c_str(), buf.length());
-    }
-    dprintf(idx, "sb le\n");
-    putlog(LOG_BOTS, "*", "Completed binary file send to %s", dcc[idx].nick);
-    dcc[idx].status &= ~STAT_SENDINGU;
-    dcc[idx].status |= STAT_UPDATED;
-    bupdating = 0;
+    stream_continue(NULL);
   } else {
-    if ((i = raw_dcc_send(update_fpath, "*binary", "(binary)", &j)) > 0) {
+    if ((res = raw_dcc_send(update_fpath, "*binary", "(binary)", &j)) != DccSendResult::Ok) {
       putlog(LOG_BOTS, "*", "%s -- can't send new binary",
-             i == DCCSEND_FULL   ? "NO MORE DCC CONNECTIONS" :
-             i == DCCSEND_NOSOCK ? "CAN'T OPEN A LISTENING SOCKET" :
-             i == DCCSEND_BADFN  ? "BAD FILE" :
-             i == DCCSEND_FEMPTY ? "EMPTY FILE" : "UNKNOWN REASON!");
+             res == DccSendResult::Full   ? "NO MORE DCC CONNECTIONS" :
+             res == DccSendResult::NoSock ? "CAN'T OPEN A LISTENING SOCKET" :
+             res == DccSendResult::BadFn  ? "BAD FILE" :
+             res == DccSendResult::FEmpty ? "EMPTY FILE" : "UNKNOWN REASON!");
       dcc[idx].status &= ~(STAT_SENDINGU);
-      bupdating = 0;
+      dcc[idx].status |= STAT_UPDATED;
+      {
+        tand_t *b = findbot(dcc[idx].nick);
+        if (b) {
+          b->buildts = buildts;
+          strlcpy(b->version, egg_version, sizeof(b->version));
+          strlcpy(b->commit, commit, sizeof(b->commit));
+        }
+      }
+      UpdateModule::set_bupdating(false);
     } else {
       dcc[idx].status |= STAT_SENDINGU;
+      dcc[idx].status |= STAT_UPDATED;
+      {
+        tand_t *b = findbot(dcc[idx].nick);
+        if (b) {
+          b->buildts = buildts;
+          strlcpy(b->version, egg_version, sizeof(b->version));
+          strlcpy(b->commit, commit, sizeof(b->commit));
+        }
+      }
       strlcpy(dcc[j].host, dcc[idx].nick, sizeof(dcc[j].host));		/* Store bot's nick */
       dprintf(idx, "sb us %lu %d %lu\n", iptolong(getmyip()), dcc[j].port, dcc[j].u.xfer->length);
     }
   }
 }
 
-int cnt = 0;
 static void check_updates()
 {
   if (isupdatehub()) {
-    int i;
+    int i, offered = 0;
     char buf[1024] = "";
     tand_t *bot = NULL;
 
-    cnt++;
-    if ((cnt > 5) && bupdating)  bupdating = 0; /* 2 minutes should be plenty. */
-    if (bupdating) return;
-    cnt = 0;
+    int cnt = UpdateModule::tick();
+    if ((cnt > 1) && UpdateModule::is_bupdating())  UpdateModule::set_bupdating(false);
+    if (UpdateModule::is_bupdating()) return;
+    UpdateModule::reset_tick();
 
     for (i = 0; i < dcc_total; i++) {
       if (dcc[i].type && dcc[i].type->flags & DCT_BOT && (dcc[i].status & STAT_SHARE) &&
@@ -401,13 +522,17 @@ static void check_updates()
           putlog(LOG_DEBUG, "@", "Bot: %s has build %li/%s, offering them %li/%s", dcc[i].nick, (long)bot->buildts, bot->commit, (long) buildts, commit);
           dprintf(i, "sb u?\n");
           dcc[i].status |= STAT_OFFEREDU;
+          offered = 1;
+          break;
         }
       }
     }
-    /* send out notice to update remote bots ... */
-    /* 9999 is a hack to force all bots from old svn-revisions to upgrade to new git style */
-    simple_snprintf(buf, sizeof buf, "nu? %li 9999 %s", (long) buildts, commit);
-    putallbots(buf);
+    if (!offered) {
+      /* send out notice to update remote bots ... */
+      /* 9999 is a hack to force all bots from old svn-revisions to upgrade to new git style */
+      simple_snprintf(buf, sizeof buf, "nu? %li 9999 %s", (long) buildts, commit);
+      putallbots(buf);
+    }
   }
 }
 
@@ -458,13 +583,19 @@ void update_report(int idx, int details)
 
 static void cmd_bupdate(int idx, char *par)
 {
+  int found = 0;
+  UpdateModule::set_bupdating(false);
   for (int i = 0; i < dcc_total; i++) {
     if (dcc[i].type && !strcasecmp(dcc[i].nick, par)) {
+      found = 1;
+      putlog(LOG_BOTS, "*", "Sending binary update request to %s", par);
       dprintf(i, "sb u?\n");
-      dcc[i].status &= ~(STAT_SENDINGU | STAT_UPDATED);
+      dcc[i].status &= ~(STAT_SENDINGU | STAT_GETTINGU | STAT_UPDATED);
       dcc[i].status |= STAT_OFFEREDU;
     }
   }
+  if (!found)
+    putlog(LOG_DEBUG, "*", "bupdate: no DCC entry found for %s", par);
 }
 
 cmd_t update_cmds[] =
@@ -473,12 +604,12 @@ cmd_t update_cmds[] =
   {NULL,		NULL,	NULL,				NULL, 0}
 };
 
-void update_init()
+void UpdateModule::init()
 {
   add_builtins("bot", update_bot);
   add_builtins("dcc", update_cmds);
   if (conf.bot->hub) {
-    timer_create_secs(30, "check_updates", (Function) check_updates);
+    timer_create_secs(20, "check_updates", (Function) check_updates);
   }
 }
 /* vim: set sts=2 sw=2 ts=8 et: */
