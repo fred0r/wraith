@@ -177,7 +177,8 @@ AesCipher::decrypt_cbc_raw(const unsigned char *in, size_t *len, unsigned char *
 bd::String encrypt_string(const bd::String& key, const bd::String& data) {
   if (!key) return data;
   AesCipher cipher{std::string(key.c_str(), key.length())};
-  return bd::String(cipher.encrypt_ecb(std::string(data.c_str(), data.length())).c_str());
+  std::string result = cipher.encrypt_ecb(std::string(data.c_str(), data.length()));
+  return bd::String(result.c_str(), result.length());
 }
 
 bd::String encrypt_string_cbc(const bd::String& key, bd::String data, bd::String IV) {
@@ -193,7 +194,8 @@ bd::String encrypt_string_cbc(const bd::String& key, bd::String data, bd::String
 bd::String decrypt_string(const bd::String& key, const bd::String& data) {
   if (!key) return data;
   AesCipher cipher{std::string(key.c_str(), key.length())};
-  return bd::String(cipher.decrypt_ecb(std::string(data.c_str(), data.length())).c_str());
+  std::string result = cipher.decrypt_ecb(std::string(data.c_str(), data.length()));
+  return bd::String(result.c_str(), result.length());
 }
 
 bd::String decrypt_string_cbc(const bd::String& key, bd::String data, bd::String IV) {
