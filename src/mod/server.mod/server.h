@@ -9,21 +9,20 @@
 #include "src/binds.h"
 #include "src/dcc.h"
 #include "src/set.h"
+#include "module.h"
 #include <bdlib/src/String.h>
 #include <bdlib/src/HashTable.h>
 
+class ServerModule : public wraith::Module {
+public:
+  void init() override;
+  const char *name() const override { return "server"; }
+};
+
 #define DEQ_RATE 200
 
-#define fixcolon(x)             do {                                    \
-        if ((x)[0] == ':')                                              \
-                (x)++;                                                  \
-        else                                                            \
-                (x) = newsplit(&(x));                                   \
-} while (0)
-#define write_to_server(x,y) do {                       \
-        tputs(serv, (x), (y));                          \
-        tputs(serv, "\r\n", 2);                         \
-} while (0)
+char *fixcolon(char *x);
+void write_to_server(const char *buf, size_t len);
 
 namespace bd {
   class Stream;
@@ -34,7 +33,15 @@ struct server_list {
   char			*name;
   char			*pass;
   in_port_t		 port;
+  bool			 ssl;
 };
+
+class ServerList : public server_list {
+public:
+  static void destroy(server_list *head);
+};
+
+static_assert(sizeof(ServerList) == sizeof(server_list), "ServerList must not change server_list layout");
 
 /* Available net types.  */
 enum {
@@ -50,6 +57,7 @@ typedef struct {
   bd::String myPrivateKey;
   bd::String myPublicKeyB64;
   time_t key_created_at;
+  bool use_cbc;
 } fish_data_t;
 
 extern bind_table_t	*BT_ctcp, *BT_ctcr;
@@ -60,9 +68,22 @@ extern unsigned int     rolls;
 extern in_port_t		default_port, default_port_ssl, newserverport, curservport;
 extern time_t		server_online, tried_jupenick, tried_nick, release_time, connect_bursting;
 extern interval_t	cycle_time;
-extern char		cursrvname[], botrealname[121], botuserhost[], ctcp_reply[1024],
-			newserver[], newserverpass[], curnetwork[], botuserip[], altnick_char, deaf_char, callerid_char;
-extern struct server_list *serverlist;
+extern char		server_ipver[];
+extern int		server_using_ssl;
+extern int		ssl_use;
+
+/* Peers with a lower numver only understand server-use-ssl as a 0/1 bool
+ * (1.4.x parses it with VAR_BOOL and would clamp 2 -> 1 = SSL-only), so the
+ * mode-2 value must never be delivered to them. */
+#define SSL_MODE2_MIN_NUMVER 1005000
+
+int effective_ssl_use();
+int ssl_compat_value(int mode);
+void send_ssl_to_child(int idx);
+void distribute_ssl_var(int except = -1, int old_ssl_use = -1);
+extern char		cursrvname[], botrealname[121], botuserhost[UHOSTLEN], ctcp_reply[1024],
+			newserver[121], newserverpass[121], curnetwork[], botuserip[], altnick_char, deaf_char, callerid_char;
+extern ServerList *serverlist;
 extern struct dcc_table SERVER_SOCKET;
 extern rate_t		flood_msg, flood_ctcp, flood_callerid;
 extern bd::HashTable<bd::String, fish_data_t*> FishKeys;
@@ -79,7 +100,7 @@ void server_report(int, int);
 void server_init();
 void queue_server(int, char *, int);
 void server_die();
-void add_server(char *);
+void add_server(char *, bool ssl = false);
 void clearq(struct server_list *);
 void nuke_server(const char *);
 bool match_my_nick(const char *);

@@ -25,6 +25,8 @@
  */
 
 
+#include "server_shared.h"
+
 static void cmd_servers(int idx, char *par)
 {
   struct server_list *x = serverlist;
@@ -108,6 +110,11 @@ static void cmd_jump(int idx, char *par)
 static void cmd_keyx(int idx, char *par) {
   putlog(LOG_CMDS, "*", "#%s# keyx %s", dcc[idx].nick, par);
 
+  if (!ischanhub()) {
+    dprintf(idx, "I'm not a chathub (+c).\n");
+    return;
+  }
+
   if (!par[0]) {
     dprintf(idx, "Usage: keyx <nick>\n");
     return;
@@ -130,6 +137,11 @@ static void cmd_keyx(int idx, char *par) {
 
 static void cmd_setkey(int idx, char *par) {
   putlog(LOG_CMDS, "*", "#%s# setkey %s", dcc[idx].nick, par);
+
+  if (!ischanhub()) {
+    dprintf(idx, "I'm not a chathub (+c).\n");
+    return;
+  }
 
   const bool target_is_chan = par[0] && strchr(CHANMETA, par[0]);
 
@@ -173,17 +185,17 @@ static void cmd_clearqueue(int idx, char *par)
   }
   if (!strcasecmp(par, "all")) {
     msgs = modeq.tot + mq.tot + hq.tot + aq.tot;
-    msgq_clear(&modeq);
-    msgq_clear(&mq);
-    msgq_clear(&hq);
-    msgq_clear(&aq);
+    modeq.clear();
+    mq.clear();
+    hq.clear();
+    aq.clear();
     burst = 0;
     double_warned = 0;
     dprintf(idx, "Removed %d message%s from all queues.\n", msgs, 
         (msgs != 1) ? "s" : "");
   } else if (!strcasecmp(par, "mode")) {
     msgs = modeq.tot;
-    msgq_clear(&modeq);
+    modeq.clear();
     if (mq.tot == 0)
       burst = 0;
     double_warned = 0;
@@ -191,19 +203,19 @@ static void cmd_clearqueue(int idx, char *par)
         (msgs != 1) ? "s" : "");
   } else if (!strcasecmp(par, "help")) {
     msgs = hq.tot;
-    msgq_clear(&hq);
+    hq.clear();
     double_warned = 0;
     dprintf(idx, "Removed %d message%s from the help queue.\n", msgs,
         (msgs != 1) ? "s" : "");
   } else if (!strcasecmp(par, "play")) {
     msgs = aq.tot;
-    msgq_clear(&aq);
+    aq.clear();
     double_warned = 0;
     dprintf(idx, "Removed %d message%s from the play queue.\n", msgs,
         (msgs != 1) ? "s" : "");
   } else if (!strcasecmp(par, "server")) {
     msgs = mq.tot;
-    msgq_clear(&mq);
+    mq.clear();
     if (modeq.tot == 0)
       burst = 0;
     double_warned = 0;
@@ -219,7 +231,7 @@ static void cmd_clearqueue(int idx, char *par)
  *
  * As with msg commands, function is responsible for any logging.
  */
-static cmd_t C_dcc_serv[] =
+cmd_t C_dcc_serv[] =
 {
   {"clearqueue",	"m",	(Function) cmd_clearqueue,	NULL, LEAF|AUTH},
   {"dump",		"a",	(Function) cmd_dump,		NULL, LEAF},

@@ -25,33 +25,7 @@
  */
 
 
-#include "src/common.h"
-#include "src/set.h"
-#include "src/botmsg.h"
-#include "src/rfc1459.h"
-#include "src/settings.h"
-#include "src/match.h"
-#include "src/binds.h"
-#include "src/users.h"
-#include "src/userrec.h"
-#include "src/main.h"
-#include "src/response.h"
-#include "src/misc.h"
-#include "src/chanprog.h"
-#include "src/net.h"
-#include "src/auth.h"
-#include "src/adns.h"
-#include "src/socket.h"
-#include "src/egg_timer.h"
-#include "src/mod/channels.mod/channels.h"
-#include "src/mod/ctcp.mod/ctcp.h"
-#include "src/mod/irc.mod/irc.h"
-#include <bdlib/src/Stream.h>
-#include <bdlib/src/String.h>
-#include <bdlib/src/Array.h>
-#include "server.h"
-#include <stdarg.h>
-#include <vector>
+#include "server_shared.h"
 
 int default_alines = 5;		/* How many mode lines are assumed will work before throttling */
 bool floodless = 0;		/* floodless iline? */
@@ -61,8 +35,8 @@ int servidx = -1;		/* idx of server */
 char newserver[121] = "";	/* new server? */
 in_port_t newserverport = 0;		/* new server port? */
 char newserverpass[121] = "";	/* new server password? */
-static char serverpass[121] = "";
-static time_t trying_server;	/* trying to connect to a server right now? */
+char serverpass[121] = "";
+time_t trying_server;	/* trying to connect to a server right now? */
 int curserv = 999;		/* current position in server list: */
 in_port_t curservport = 0;
 rate_t flood_msg = { 5, 60 };
@@ -74,37 +48,37 @@ char botuserip[UHOSTLEN] = "";		/* bot's user@host with the ip. */
 time_t release_time = 0;
 bool keepnick = 1;		/* keep trying to regain my intended
 				   nickname? */
-static int nick_juped = 0;	/* True if origbotname is juped(RPL437) (dw) (1 = RESV, 2 = NETSPLIT) */
-static int jnick_juped = 0;    /* True if jupenick is juped (1 = RESV, 2 = NETSPLIT) */
+int nick_juped = 0;	/* True if origbotname is juped(RPL437) (dw) (1 = RESV, 2 = NETSPLIT) */
+int jnick_juped = 0;    /* True if jupenick is juped (1 = RESV, 2 = NETSPLIT) */
 time_t tried_jupenick = 0;
 time_t tried_nick = 0;
 bool use_monitor = 0;
-static bool waiting_for_awake;	/* set when i unidle myself, cleared when I get the response */
+bool waiting_for_awake;	/* set when i unidle myself, cleared when I get the response */
 time_t server_online = 0;	/* server connection time */
 char botrealname[121] = "A deranged product of evil coders.";	/* realname of bot */
-static interval_t server_timeout = 15;	/* server timeout for connecting */
-static const interval_t stoned_timeout = 500;
-struct server_list *serverlist = NULL;	/* old-style queue, still used by
+interval_t server_timeout = 15;	/* server timeout for connecting */
+extern const interval_t stoned_timeout = 500;
+ServerList *serverlist = NULL;	/* old-style queue, still used by
 					   server list */
 interval_t cycle_time;			/* cycle time till next server connect */
 in_port_t default_port = 6667;		/* default IRC port */
 in_port_t default_port_ssl = 6697;		/* default IRC SSL port */
 bool trigger_on_ignore;	/* trigger bindings if user is ignored ? */
 int answer_ctcp = 1;		/* answer how many stacked ctcp's ? */
-static bool resolvserv;		/* in the process of resolving a server host */
-static time_t lastpingtime;	/* IRCNet LAGmeter support -- drummer */
-static char stackablecmds[511] = "";
-static char stackable2cmds[511] = "";
-static egg_timeval_t last_time;
+bool resolvserv;		/* in the process of resolving a server host */
+time_t lastpingtime;	/* IRCNet LAGmeter support -- drummer */
+char stackablecmds[511] = "";
+char stackable2cmds[511] = "";
+egg_timeval_t last_time;
 time_t connect_bursting = 0;
-static int real_msgburst = 0;
-static int real_msgrate = 0;
+int real_msgburst = 0;
+int real_msgrate = 0;
 int flood_count = 0;
 int burst = 0;
-static bool use_flood_count = 0;
+bool use_flood_count = 0;
 static egg_timeval_t flood_time = {0, 0};
-static bool use_penalties;
-static int use_fastdeq;
+bool use_penalties;
+int use_fastdeq;
 size_t nick_len = 9;			/* Maximal nick length allowed on the network. */
 char deaf_char = 0;
 bool in_deaf = 0;
@@ -115,25 +89,17 @@ bool have_cnotice = 0;
 
 bd::HashTable<bd::String, fish_data_t*> FishKeys;
 
-static bool double_warned = 0;
+bool double_warned = 0;
 
-static void empty_msgq(void);
-static void disconnect_server(int);
 static void calc_penalty(char *, size_t);
 static bool fast_deq(int);
 static char *splitnicks(char **);
-static void msgq_clear(struct msgq_head *qh);
 static int stack_limit = 4;
-static bool replaying_cache = 0;
+bool replaying_cache = 0;
 
 /* New bind tables. */
-static bind_table_t *BT_raw = NULL, *BT_msg = NULL;
+bind_table_t *BT_raw = NULL, *BT_msg = NULL;
 bind_table_t *BT_ctcr = NULL, *BT_ctcp = NULL;
-// Ratbox is (5*8):30, ircd-seven is (5*8):20, try to not push th elimits.
-#define SERVER_CONNECT_BURST_TIME 18
-#define SERVER_CONNECT_BURST_RATE 5 * 8
-
-#include "servmsg.cc"
 
 #define MAXPENALTY 10
 
@@ -141,7 +107,7 @@ bind_table_t *BT_ctcr = NULL, *BT_ctcp = NULL;
 #define MSGRATE (use_flood_count ? DEQ_RATE : msgrate)
 
 /* Maximum messages to store in each queue. */
-static struct msgq_head mq, hq, modeq, aq, cacheq;
+MessageQueue mq, hq, modeq, aq, cacheq;
 
 static const struct {
   struct msgq_head* const q;
@@ -165,7 +131,18 @@ static const struct {
 #define Q_PLAY 3
 #define Q_CACHE 4
 
-#include "cmdsserv.cc"
+char *fixcolon(char *x)
+{
+  if (x[0] == ':')
+    return x + 1;
+  return newsplit(&x);
+}
+
+void write_to_server(const char *buf, size_t len)
+{
+  tputs(serv, buf, len);
+  tputs(serv, "\r\n", 2);
+}
 
 
 /*
@@ -637,10 +614,10 @@ static bool fast_deq(int which)
 
 /* Clean out the msg queues (like when changing servers).
  */
-static void empty_msgq()
+void empty_msgq()
 {
   for (size_t i = 0; i < (sizeof(qdsc) / sizeof(qdsc[0])); ++i)
-    msgq_clear(qdsc[i].q);
+    static_cast<MessageQueue *>(qdsc[i].q)->clear();
   burst = 0;
   flood_count = 0;
   flood_time.sec = flood_time.usec = 0;
@@ -692,12 +669,12 @@ void queue_server(int which, char *buf, int len)
       return;
   }
 
-  struct msgq_head *h = qdsc[which_q].q;
+  MessageQueue *h = static_cast<MessageQueue *>(qdsc[which_q].q);
 
-  if (h->tot < qdsc[which_q].maxqmsg) {
+  if (h->count() < qdsc[which_q].maxqmsg) {
     /* Don't queue msg if it's already queued?  */
     if (!qdsc[which_q].double_msg) {
-      for (struct msgq* tq = qdsc[which_q].q->head; tq; tq = tq->next) {
+      for (struct msgq* tq = h->head; tq; tq = tq->next) {
 	if (!strcasecmp(tq->msg, buf)) {
 	  if (!double_warned) {
 	    if (buf[len - 1] == '\n')
@@ -710,23 +687,7 @@ void queue_server(int which, char *buf, int len)
       }
     }
 
-    struct msgq *q = (struct msgq *) calloc(1, sizeof(struct msgq));
-
-    if (h->head) {
-      if (!qnext) { //Not next, add to end of queue
-        h->last->next = q;
-        h->last = q;
-      } else if (qnext) { //Should be next, insert into front of queue
-        q->next = h->head;
-        h->head = q;
-      }
-    } else
-      h->head = h->last = q;
-    q->len = len;
-    q->msg = (char *) calloc(1, len + 1);
-    strlcpy(q->msg, buf, len + 1);
-    ++(h->tot);
-    h->warned = 0;
+    h->enqueue(buf, len, qnext);
     double_warned = 0;
   } else {
     if (!h->warned)
@@ -741,9 +702,68 @@ void queue_server(int which, char *buf, int len)
   deq_msg();
 }
 
+/* When ssl_use=2, only +c (BOT_CHANHUB) bots connect via SSL to IRC. */
+int effective_ssl_use()
+{
+  if (ssl_use == 2) {
+    if (conf.bot && !conf.bot->hub && conf.bot->u && (conf.bot->u->flags & BOT_CHANHUB))
+      return 1;
+    return 0;
+  }
+  return ssl_use;
+}
+
+/* The value an old (numver < SSL_MODE2_MIN_NUMVER) peer can safely parse:
+ * mode 2 means "plain for everyone it can be", i.e. 0. */
+int ssl_compat_value(int mode)
+{
+  return (mode == 2) ? 0 : (mode ? 1 : 0);
+}
+
+/* Send server-use-ssl to a single newly-linked/capable peer. Old peers are
+ * skipped here (their value is synced via the shared userfile and by
+ * distribute_ssl_var() only when their 0/1 value actually changes). */
+void send_ssl_to_child(int idx)
+{
+  if (idx < 0 || idx >= dcc_total || !dcc[idx].type || dcc[idx].type != &DCC_BOT)
+    return;
+  if (!dcc[idx].u.bot || dcc[idx].u.bot->numver < SSL_MODE2_MIN_NUMVER)
+    return;
+
+  botnet_send_var_value(idx, "server-use-ssl", ssl_use == 2 ? "2" : (ssl_use ? "1" : "0"));
+}
+
+/* Deliver a changed server-use-ssl to every direct child (hop-by-hop; each
+ * new hub/localhub forwards to its own children). New peers always get the
+ * real value (2 included); old peers get the compatible 0/1 form only when
+ * that value actually changed, so a 0<->2 switch does not make 1.4.x leaves
+ * reprocess/reconnect their IRC connection.
+ *
+ * `old_ssl_use` is the mode before the change, or -1 when unknown. */
+void distribute_ssl_var(int except, int old_ssl_use)
+{
+  const int new_old = ssl_compat_value(ssl_use);
+  const int prev_old = (old_ssl_use < 0) ? new_old : ssl_compat_value(old_ssl_use);
+  const bool old_changed = (new_old != prev_old);
+
+  for (int i = 0; i < dcc_total; i++) {
+    if (i == except)
+      continue;
+    if (!dcc[i].type || dcc[i].type != &DCC_BOT || !dcc[i].u.bot)
+      continue;
+
+    if (dcc[i].u.bot->numver < SSL_MODE2_MIN_NUMVER) {
+      if (old_changed)
+        botnet_send_var_value(i, "server-use-ssl", new_old ? "1" : "0");
+    } else {
+      send_ssl_to_child(i);
+    }
+  }
+}
+
 /* Add a new server to the server_list.
  */
-void add_server(char *ss)
+void add_server(char *ss, bool ssl)
 {
   struct server_list *x = NULL, *z = NULL;
   char *p = NULL, *q = NULL;
@@ -754,14 +774,15 @@ void add_server(char *ss)
     p = strchr(ss, ',');
     if (p)
       *p++ = 0;
-    x = (struct server_list *) calloc(1, sizeof(struct server_list));
+    x = new ServerList();
 
     x->next = 0;
     x->port = 0;
+    x->ssl = ssl;
     if (z)
       z->next = x;
     else
-      serverlist = x;
+      serverlist = static_cast<ServerList *>(x);
     z = x;
     q = strchr(ss, ':');
     if (!q) {
@@ -796,19 +817,22 @@ void add_server(char *ss)
 
 /* Clear out the given server_list.
  */
+void ServerList::destroy(server_list *head)
+{
+  while (head) {
+    server_list *next = head->next;
+    if (head->name)
+      free(head->name);
+    if (head->pass)
+      free(head->pass);
+    delete static_cast<ServerList *>(head);
+    head = next;
+  }
+}
+
 void clearq(struct server_list *xx)
 {
-  struct server_list *x = NULL;
-
-  while (xx) {
-    x = xx->next;
-    if (xx->name)
-      free(xx->name);
-    if (xx->pass)
-      free(xx->pass);
-    free(xx);
-    xx = x;
-  }
+  ServerList::destroy(xx);
 }
 
 /* Set botserver to the next available server.
@@ -836,11 +860,12 @@ void next_server(int *ptr, char *servname, in_port_t *port, char *pass)
       i++;
     }
     /* Gotta add it: */
-    x = (struct server_list *) calloc(1, sizeof(struct server_list));
+    x = new ServerList();
 
     x->next = 0;
     x->name = strdup(servname);
-    x->port = *port ? *port : (ssl_use ? default_port_ssl : default_port);
+    x->port = *port ? *port : (effective_ssl_use() ? default_port_ssl : default_port);
+    x->ssl = (effective_ssl_use() >= 1);
     if (pass && pass[0]) {
       x->pass = strdup(pass);
     } else
@@ -863,10 +888,42 @@ void next_server(int *ptr, char *servname, in_port_t *port, char *pass)
     x = serverlist;
     *ptr = 0;
   }				/* Start over at the beginning */
-  strcpy(servname, x->name);
-  *port = x->port ? x->port : (ssl_use ? default_port_ssl : default_port);
+
+  /* Skip entries whose SSL flag doesn't match the per-bot effective mode.
+   * If none match, do not fall back to a mismatched entry (that would send
+   * plaintext to a TLS port, or TLS to a plaintext port); report no server. */
+  if (x != NULL && x->ssl != (effective_ssl_use() >= 1)) {
+    struct server_list *scan = x;
+    bool found = false;
+
+    do {
+      if (x->ssl == (effective_ssl_use() >= 1)) {
+        found = true;
+        break;
+      }
+      x = x->next;
+      (*ptr)++;
+      if (x == NULL) {
+        x = serverlist;
+        *ptr = 0;
+      }
+      if (x == NULL)
+        break;
+    } while (x != scan);
+
+    if (!found)
+      x = NULL;
+  }
+  if (x == NULL) {
+    servname[0] = 0;
+    *port = effective_ssl_use() ? default_port_ssl : default_port;
+    pass[0] = 0;
+    return;
+  }
+  strlcpy(servname, x->name, UHOSTLEN);
+  *port = x->port ? x->port : (effective_ssl_use() ? default_port_ssl : default_port);
   if (x->pass)
-    strcpy(pass, x->pass);
+    strlcpy(pass, x->pass, 121);
   else
     pass[0] = 0;
 }
@@ -1011,7 +1068,7 @@ static void dcc_chat_hostresolved(int i)
  *     Server timer functions
  */
 
-static void end_burstmode() {
+void end_burstmode() {
   if (connect_bursting) {
     connect_bursting = 0;
     msgburst = real_msgburst;
@@ -1187,17 +1244,38 @@ void server_report(int idx, int details)
   }
 }
 
-static void msgq_clear(struct msgq_head *qh)
+void MessageQueue::clear()
 {
   struct msgq *qq = NULL;
 
-  for (struct msgq *q = qh->head; q; q = qq) {
+  for (struct msgq *q = head; q; q = qq) {
     qq = q->next;
     free(q->msg);
     free(q);
   }
-  qh->head = qh->last = NULL;
-  qh->tot = qh->warned = 0;
+  head = last = NULL;
+  tot = warned = 0;
+}
+
+void MessageQueue::enqueue(const char *buf, int len, bool front)
+{
+  struct msgq *q = (struct msgq *) calloc(1, sizeof(struct msgq));
+
+  if (head) {
+    if (!front) {
+      last->next = q;
+      last = q;
+    } else {
+      q->next = head;
+      head = q;
+    }
+  } else
+    head = last = q;
+  q->len = len;
+  q->msg = (char *) calloc(1, len + 1);
+  strlcpy(q->msg, buf, len + 1);
+  ++tot;
+  warned = 0;
 }
 
 static cmd_t my_ctcps[] =
@@ -1206,7 +1284,7 @@ static cmd_t my_ctcps[] =
   {NULL,	NULL,	NULL,			NULL, 0}
 };
 
-void server_init()
+void ServerModule::init()
 {
   strlcpy(botrealname, "A deranged product of evil coders", sizeof(botrealname));
 

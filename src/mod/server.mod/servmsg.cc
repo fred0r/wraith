@@ -24,10 +24,14 @@
  */
 
 
+#include "server_shared.h"
+
 #include <netinet/tcp.h>
 
 char cursrvname[120] = "";
 char curnetwork[120] = "";
+char server_ipver[8] = "";
+int server_using_ssl = 0;
 static time_t last_ctcp    = (time_t) 0L;
 static int    count_ctcp   = 0;
 char   altnick_char = 0;
@@ -128,7 +132,7 @@ static int gotfake433(char *nick)
   return 0;
 }
 
-/* Check for tcl-bound msg command, return 1 if found
+/* Check for bound msg command, return 1 if found
  *
  * msg: proc-name <nick> <user@host> <handle> <args...>
  */
@@ -157,18 +161,23 @@ static int check_bind_raw(char *from, char *code, char *msg)
 
   myfrom = p1 = strdup(from);
 
-  // Decrypt FiSH before processing
-  if (!strcmp(code, "PRIVMSG") || !strcmp(code, "NOTICE")) {
+  // Decrypt FiSH before processing (only chathubs use FiSH)
+  if (ischanhub() && (!strcmp(code, "PRIVMSG") || !strcmp(code, "NOTICE"))) {
     char* colon = strchr(msg, ':'), *first_word = strchr(msg, ' ');
-    bd::String target(msg, first_word - msg);
 
-    ++colon;
-    if (colon) {
-      if (!strncmp(colon, "+OK ", 4)) {
+    if (colon && first_word) {
+      bd::String target(msg, first_word - msg);
+
+      ++colon;
+      // Skip FiSH processing for CTCP messages — they are plaintext protocol
+      if (colon[0] == '\001')
+        ; /* CTCP, do nothing */
+      else if (!strncmp(colon, "+OK ", 4)) {
         bool isValidCipherText;
         char *p = strchr(from, '!');
         const bool target_is_chan = strchr(CHANMETA, target[0]);
         bd::String ciphertext(colon), sharedKey, nick(from, p - from), key_target;
+        const bool isCBC = (colon[4] == '*');
 
         // If this is a channel msg, decrypt with the channel key
         if (target_is_chan) {
@@ -191,7 +200,9 @@ static int check_bind_raw(char *from, char *code, char *msg)
 
         if (sharedKey.length()) {
           // Decrypt the message before passing along to the binds
-          const bd::String decrypted(egg_bf_decrypt(ciphertext, sharedKey));
+          const bd::String decrypted(isCBC
+              ? fish_bf_cbc_decrypt(sharedKey, bd::String(colon + 5))
+              : egg_bf_decrypt(ciphertext, sharedKey));
           // Does the decrypted text make sense? If not, the key is probably invalid, reset it.
           isValidCipherText = true;
           for (size_t i = 0; i < decrypted.length(); ++i) {
@@ -212,8 +223,15 @@ static int check_bind_raw(char *from, char *code, char *msg)
         } else {
           isValidCipherText = false;
         }
-        if (fish_auto_keyx && !isValidCipherText && !target_is_chan) {
-          keyx(nick, "Invalid/Unknown key");
+        if (!isValidCipherText && !target_is_chan) {
+          struct userrec *u = get_user_by_host(from);
+          if (u) {
+            struct flag_record fr = { FR_GLOBAL | FR_CHAN | FR_ANYWH, 0, 0, 0 };
+            get_user_flagrec(u, &fr, NULL);
+            if (glob_op(fr) || chan_op(fr) || glob_voice(fr) || chan_voice(fr)) {
+              keyx(nick, "Invalid/Unknown key");
+            }
+          }
         }
       }
     }
@@ -282,7 +300,7 @@ join_chans()
 static int got001(char *from, char *msg)
 {
 
-  fixcolon(msg);
+  msg = fixcolon(msg);
   server_online = now;
   waiting_for_awake = 0;
   rehash_server(from, msg);
@@ -389,15 +407,15 @@ got005(char *from, char *msg)
     }
     else if (!strcasecmp(tmp, "NETWORK")) {
       strlcpy(curnetwork, p, 120);
-      if (!strcasecmp(tmp, "IRCnet")) {
+      if (!strcasecmp(curnetwork, "IRCnet")) {
         simple_snprintf(stackablecmds, sizeof(stackablecmds), "INVITE AWAY VERSION NICK");
         simple_snprintf(stackable2cmds, sizeof(stackable2cmds), "USERHOST ISON");
         use_fastdeq = 3;
-      } else if (!strcasecmp(tmp, "DALnet")) {
+      } else if (!strcasecmp(curnetwork, "DALnet")) {
         simple_snprintf(stackablecmds, sizeof(stackablecmds), "PRIVMSG NOTICE PART WHOIS WHOWAS USERHOST ISON WATCH DCCALLOW");
         simple_snprintf(stackable2cmds, sizeof(stackable2cmds), "USERHOST ISON WATCH");
         use_fastdeq = 2;
-      } else if (!strcasecmp(tmp, "UnderNet")) {
+      } else if (!strcasecmp(curnetwork, "UnderNet")) {
         simple_snprintf(stackablecmds, sizeof(stackablecmds), "PRIVMSG NOTICE TOPIC PART WHOIS USERHOST USERIP ISON");
         simple_snprintf(stackable2cmds, sizeof(stackable2cmds), "USERHOST USERIP ISON");
         use_fastdeq = 2;
@@ -454,9 +472,7 @@ got005(char *from, char *msg)
     else if (!strcasecmp(tmp, "CASEMAPPING")) {
       /* we are default set to rfc1459, so only switch if NOT rfc1459 */
       if (strcasecmp(p, "rfc1459")) {
-        rfc_casecmp = strcasecmp;
-        rfc_ncasecmp = strncasecmp;
-        rfc_char_equal = char_equal;
+        active_case_mapping = &ascii_mapping;
       }
     }
   }
@@ -606,9 +622,7 @@ static bool detect_flood(const char *floodnick, const char *floodhost,
     lastmsgs[which] = 0;
     lastmsgtime[which] = 0;
     lastmsghost[which][0] = 0;
-#ifdef TCL
     u = get_user_by_host(from);
-#endif
     /* Private msg */
     simple_snprintf(h, sizeof(h), "*!*@%s", p);
     putlog(LOG_MISC, "*", "Flood from @%s!  Placing on ignore!", p);
@@ -652,7 +666,7 @@ static int gotmsg(char *from, char *msg)
 
   to = newsplit(&msg);
 
-  fixcolon(msg);
+  msg = fixcolon(msg);
   /* Only check if flood-ctcp is active */
   strlcpy(uhost, from, UHOSTLEN);
   nick = splitnick(&uhost);
@@ -684,7 +698,8 @@ static int gotmsg(char *from, char *msg)
       ctcp = ctcpbuf;
 
       /* remove the ctcp in msg */
-      memmove(p1 - 1, p + 1, strlen(p + 1) + 1);
+      if (p1 > msg)
+        memmove(p1 - 1, p + 1, strlen(p + 1) + 1);
 
       if (!ignoring)
         detect_flood(nick, uhost, from, strncmp(ctcp, "ACTION ", 7) ? FLOOD_CTCP : FLOOD_PRIVMSG);
@@ -820,7 +835,12 @@ static int gotmsg(char *from, char *msg)
 }
 
 // Adapated from ZNC
-void handle_DH1080_init(const char* nick, const char* uhost, const char* from, struct userrec* u, const bd::String theirPublicKeyB64) {
+void handle_DH1080_init(const char* nick, const char* uhost, const char* from, struct userrec* u, const bd::String theirPublicKeyB64, const bool peer_cbc) {
+  if (!ischanhub()) {
+    putlog(LOG_MSGS, "*", "[FiSH] Received DH1080_INIT from (%s!%s) but I'm not a chathub (+c), ignoring", nick, uhost);
+    return;
+  }
+
   bd::String myPublicKeyB64, myPrivateKey, sharedKey;
 
   DH1080_gen(myPrivateKey, myPublicKeyB64);
@@ -832,7 +852,9 @@ void handle_DH1080_init(const char* nick, const char* uhost, const char* from, s
   putlog(LOG_MSGS, "*", "[FiSH] Received DH1080 public key from (%s!%s) - sending mine", nick, uhost);
   fish_data_t* fishData = FishKeys.contains(nick) ? FishKeys[nick] : new fish_data_t;
   fishData->sharedKey.clear();
-  notice(nick, "DH1080_FINISH " + myPublicKeyB64, DP_HELP);
+  fishData->use_cbc = peer_cbc;
+  bd::String finishSuffix = peer_cbc ? bd::String(" CBC") : bd::String();
+  notice(nick, "DH1080_FINISH " + myPublicKeyB64 + finishSuffix, DP_HELP);
   fishData->myPublicKeyB64 = myPublicKeyB64;
   fishData->myPrivateKey = myPrivateKey;
   fishData->sharedKey = sharedKey;
@@ -842,7 +864,12 @@ void handle_DH1080_init(const char* nick, const char* uhost, const char* from, s
   return;
 }
 
-void handle_DH1080_finish(const char* nick, const char* uhost, const char* from, struct userrec* u, const bd::String theirPublicKeyB64) {
+void handle_DH1080_finish(const char* nick, const char* uhost, const char* from, struct userrec* u, const bd::String theirPublicKeyB64, const bool peer_cbc) {
+  if (!ischanhub()) {
+    putlog(LOG_MSGS, "*", "[FiSH] Received DH1080_FINISH from (%s!%s) but I'm not a chathub (+c), ignoring", nick, uhost);
+    return;
+  }
+
   if (!FishKeys.contains(nick)) {
     putlog(LOG_MSGS, "*", "[FiSH] Unexpected DH1080_FINISH from (%s!%s) - ignoring", nick, uhost);
     return;
@@ -858,6 +885,7 @@ void handle_DH1080_finish(const char* nick, const char* uhost, const char* from,
 
   putlog(LOG_MSGS, "*", "[FiSH] Key successfully set for (%s!%s)", nick, uhost);
   fishData->sharedKey = sharedKey;
+  fishData->use_cbc = peer_cbc;
   sdprintf("Set key for %s: %s", nick, sharedKey.c_str());
   return;
 }
@@ -877,7 +905,7 @@ static int gotnotice(char *from, char *msg)
   bool ignoring = match_ignore(from);
 
   to = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
   strlcpy(uhost, from, UHOSTLEN);
   nick = splitnick(&uhost);
   if (flood_ctcp.count && detect_avalanche(msg)) {
@@ -900,7 +928,8 @@ static int gotnotice(char *from, char *msg)
       ctcp = ctcpbuf;
 
       /* remove the ctcp in msg */
-      memmove(p1 - 1, p + 1, strlen(p + 1) + 1);
+      if (p1 > ctcpmsg)
+        memmove(p1 - 1, p + 1, strlen(p + 1) + 1);
 
       if (!ignoring)
 	detect_flood(nick, uhost, from, FLOOD_CTCP);
@@ -947,10 +976,12 @@ static int gotnotice(char *from, char *msg)
 
         if (which == "DH1080_INIT") {
           bd::String theirPublicKeyB64(newsplit(smsg));
-          handle_DH1080_init(nick, uhost, from, u, theirPublicKeyB64);
+          const bool peer_cbc = smsg.length() > 0 && !strcmp(smsg.c_str(), "CBC");
+          handle_DH1080_init(nick, uhost, from, u, theirPublicKeyB64, peer_cbc);
         } else if (which == "DH1080_FINISH") {
           bd::String theirPublicKeyB64(newsplit(smsg));
-          handle_DH1080_finish(nick, uhost, from, u, theirPublicKeyB64);
+          const bool peer_cbc = smsg.length() > 0 && !strcmp(smsg.c_str(), "CBC");
+          handle_DH1080_finish(nick, uhost, from, u, theirPublicKeyB64, peer_cbc);
         } else {
           putlog(LOG_MSGS, "*", "-%s (%s)- %s", nick, uhost, msg);
         }
@@ -964,7 +995,7 @@ static int gotnotice(char *from, char *msg)
  */
 static int gotwall(char *from, char *msg)
 {
-  fixcolon(msg);
+  msg = fixcolon(msg);
   putlog(LOG_WALL, "*", "!%s! %s", from, msg);
   return 0;
 }
@@ -1022,14 +1053,16 @@ static void minutely_checks()
 static int gotpong(char *from, char *msg)
 {
   newsplit(&msg);
-  fixcolon(msg);		/* Scrap server name */
+  msg = fixcolon(msg);		/* Scrap server name */
 
   server_lag = now - my_atoul(msg);
+  waiting_for_awake = 0;
 
   if (server_lag > 99999) {
     /* IRCnet lagmeter support by drummer */
     server_lag = now - lastpingtime;
   }
+  waiting_for_awake = 0;
   return 0;
 }
 
@@ -1043,7 +1076,7 @@ static void nick_which(const char* nick, bool& is_jupe, bool& is_orig) {
   }
 }
 
-static void nick_available(bool is_jupe, bool is_orig) {
+void nick_available(bool is_jupe, bool is_orig) {
   if (jupenick[0] && is_jupe && !match_my_nick((jupenick))) {
     /* Ensure we aren't processing a QUIT/NICK and a MONITOR, or just some screw up */
     if (!tried_jupenick || ((now - tried_jupenick) > 2)) {
@@ -1129,7 +1162,7 @@ void release_nick(const char* nick) {
 static void got730(char* from, char* msg)
 {
   char *tmp = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
 
 
   if (tmp[0] && (!strcmp(tmp, "*") || match_my_nick(tmp))) {
@@ -1152,7 +1185,7 @@ static void got730(char* from, char* msg)
 static void got731(char* from, char* msg)
 {
   char *tmp = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
 
   //msg now contains the nick(s) available
   if (tmp[0] && (!strcmp(tmp, "*") || match_my_nick(tmp)))
@@ -1164,7 +1197,7 @@ static void got731(char* from, char* msg)
 static void got303(char *from, char *msg)
 {
   char *tmp = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
   if (tmp[0] && match_my_nick(tmp))
     nicks_available(msg, ' ', 0);
 }
@@ -1322,7 +1355,7 @@ static int got438(char *from, char *msg)
 {
   newsplit(&msg);
   newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
   putlog(LOG_MISC, "*", "%s", msg);
   return 0;
 }
@@ -1364,7 +1397,7 @@ static int gotnick(char *from, char *msg)
   //Done to prevent gotnick in irc.mod getting a mangled from
   buf = buf_ptr = strdup(from);
   nick = splitnick(&buf);
-  fixcolon(msg);
+  msg = fixcolon(msg);
 
   if (match_my_nick(nick)) {
     /* Regained nick! */
@@ -1418,7 +1451,7 @@ static int gotmode(char *from, char *msg)
   if (strchr(CHANMETA, ch[0]) == NULL) {
     if (match_my_nick(ch) && !strcmp(curnetwork, "IRCnet")) {
       // Umode +r is restricted on IRCnet, can only chat.
-      fixcolon(buf);
+      buf = fixcolon(buf);
       if ((buf[0] == '+') && strchr(buf, 'r')) {
 	putlog(LOG_SERV, "*", "%s has me i-lined (jumping)", dcc[servidx].host);
 	nuke_server("i-lines suck");
@@ -1429,12 +1462,12 @@ static int gotmode(char *from, char *msg)
   return 0;
 }
 
-static void end_burstmode();
-void irc_init();
 
-static void disconnect_server(int idx)
+void disconnect_server(int idx)
 {
   server_online = 0;
+  server_using_ssl = 0;
+  server_ipver[0] = 0;
   if ((serv != dcc[idx].sock) && serv >= 0)
     killsock(serv);
   if (dcc[idx].sock >= 0)
@@ -1475,14 +1508,12 @@ static void display_server(int idx, char *buf, size_t bufsiz)
   simple_snprintf(buf, bufsiz, "%s  (lag: %d)", trying_server ? "conn" : "serv", server_lag);
 }
 
-static void connect_server(void);
-
 static void kill_server(int idx, void *x)
 {
   disconnect_server(idx);
   Auth::DeleteAll();
   if (reset_chans == 2) {
-    irc_init();
+    IrcModule::instance().init();
   }
   reset_chans = 0;
   /* Invalidate the cmd_swhois cache callback data */
@@ -1509,8 +1540,6 @@ static void timeout_server(int idx)
   lostdcc(idx);
 }
 
-static void server_activity(int, char *, int);
-
 struct dcc_table SERVER_SOCKET =
 {
   "SERVER",
@@ -1525,17 +1554,13 @@ struct dcc_table SERVER_SOCKET =
   NULL
 };
 
-static void server_activity(int idx, char *msg, int len)
+void server_activity(int idx, char *msg, int len)
 {
   char *from = NULL, *code = NULL;
 
   if (unlikely(trying_server)) {
     strlcpy(dcc[idx].nick, "(server)", sizeof(dcc[idx].nick));
-    if (ssl_use) {
-      putlog(LOG_SERV, "*", "Connected to %s with SSL", dcc[idx].host);
-    } else {
-      putlog(LOG_SERV, "*", "Connected to %s", dcc[idx].host);
-    }
+    putlog(LOG_SERV, "*", "Connected to %s [%s]%s", dcc[idx].host, server_ipver, server_using_ssl ? " [SSL]" : "");
 
     trying_server = 0;
     /*
@@ -1574,7 +1599,7 @@ static void server_activity(int idx, char *msg, int len)
 
 static int gotping(char *from, char *msg)
 {
-  fixcolon(msg);
+  msg = fixcolon(msg);
   dprintf(DP_MODE, "PONG :%s\n", msg);
   return 0;
 }
@@ -1678,7 +1703,7 @@ static int got311(char *from, char *msg)
   username = newsplit(&msg);
   address = newsplit(&msg);
   newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
     
   if (match_my_nick(nick)) {
     simple_snprintf(botuserhost, sizeof botuserhost, "%s@%s", username, address);
@@ -1755,7 +1780,7 @@ static int got319(char *from, char *msg)
 
   newsplit(&msg);
   nick = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
 
   for (int idx = 0; idx < dcc_total; idx++) {
     if (dcc[idx].type && dcc[idx].whois[0] && !rfc_casecmp(nick, dcc[idx].whois)) {
@@ -1786,7 +1811,7 @@ static int got312(char *from, char *msg)
   newsplit(&msg);
   nick = newsplit(&msg);
   server = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
 
   irc_whois(nick, " server   : ", "%s [%s]", server, msg);
   return 0;
@@ -1799,7 +1824,7 @@ static int got301(char *from, char *msg)
 
   newsplit(&msg);
   nick = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
 
   irc_whois(nick, " away     : ", "%s", msg);
 
@@ -1814,7 +1839,7 @@ static int got302(char *from, char *msg)
   char *p = NULL, *nick = NULL, *uhost = NULL;
 
   newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
 
   p = strchr(msg, '=');
   if (!p)
@@ -1845,7 +1870,7 @@ static int got313(char *from, char *msg)
   
   newsplit(&msg);
   nick = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
  
   irc_whois(nick, "          : ", "$b%s$b", msg);
 
@@ -1863,7 +1888,7 @@ static int got317(char *from, char *msg)
   nick = newsplit(&msg);
   idle = atol(newsplit(&msg));
   signon = atol(newsplit(&msg));
-  fixcolon(msg);
+  msg = fixcolon(msg);
 
   strftime(date, sizeof date, "%c %Z", gmtime(&signon));
 
@@ -1891,7 +1916,7 @@ static int got318_369(char *from, char *msg, int whowas)
 
   newsplit(&msg);
   nick = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
 
   irc_whois(nick, NULL, "%s", msg);
   for (int idx = 0; idx < dcc_total; idx++) {
@@ -1912,7 +1937,7 @@ static int got401(char *from, char *msg)
 
   newsplit(&msg);
   nick = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
   irc_whois(nick, NULL, "%s", msg);
   for (int idx = 0; idx < dcc_total; idx++)
     if (dcc[idx].type && dcc[idx].whois[0] && !rfc_casecmp(dcc[idx].whois, nick))
@@ -1930,7 +1955,7 @@ static int got406(char *from, char *msg)
 
   newsplit(&msg);
   nick = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
   irc_whois(nick, NULL, "%s", msg);
  
   return 0;
@@ -1940,7 +1965,7 @@ static int got406(char *from, char *msg)
 static int got465(char *from, char *msg)
 {
   newsplit(&msg); /* nick */
-  fixcolon(msg);
+  msg = fixcolon(msg);
   putlog(LOG_SERV, "*", "I am klined: %s", msg);
   putlog(LOG_SERV, "*", "Disconnecting from %s.", dcc[servidx].host);
   nuke_server("I am klined!");
@@ -1975,7 +2000,7 @@ static int got718(char *from, char *msg)
 
   if (!uhost)
     uhost = newsplit(&msg);
-  fixcolon(msg);
+  msg = fixcolon(msg);
 
   simple_snprintf(s, sizeof(s), "%s!%s", nick, uhost);
 
@@ -2011,7 +2036,7 @@ static int got718(char *from, char *msg)
   return 0;
 }
  
-static cmd_t my_raw_binds[] =
+cmd_t my_raw_binds[] =
 {
   {"PRIVMSG",	"",	(Function) gotmsg,		NULL, LEAF},
   {"NOTICE",	"",	(Function) gotnotice,		NULL, LEAF},
@@ -2060,7 +2085,7 @@ static void server_dns_callback(int, void *, const char *,
 
 /* Hook up to a server
  */
-static void connect_server(void)
+void connect_server(void)
 {
   char pass[121] = "", botserver[UHOSTLEN] = "";
   int newidx;
@@ -2096,11 +2121,15 @@ static void connect_server(void)
 
     next_server(&curserv, botserver, &botserverport, pass);
 
-    if (ssl_use) {
-      putlog(LOG_SERV, "*", "Trying SSL server %s:%d", botserver, botserverport);
-    } else {
-      putlog(LOG_SERV, "*", "Trying server %s:%d", botserver, botserverport);
+    if (!botserver[0]) {
+      putlog(LOG_SERV, "*", "No server matches the current SSL mode (%d); delaying next attempt.", effective_ssl_use());
+      lostdcc(newidx);
+      cycle_time = server_cycle_wait;
+      trying_server = 0;
+      return;
     }
+
+    putlog(LOG_SERV, "*", "Connecting to server %s:%d", botserver, botserverport);
 
     dcc[newidx].port = botserverport;
     strlcpy(dcc[newidx].nick, "(server)", sizeof(dcc[newidx].nick));
@@ -2189,33 +2218,69 @@ static void server_dns_callback(int id, void *client_data, const char *host,
   strlcpy(serverpass, (char *) dcc[idx].u.dns->caller_data, sizeof(serverpass));
   changeover_dcc(idx, &SERVER_SOCKET, 0);
 
-  //No proxy, use identd, 2 = spoof ident
-  serv = open_telnet(ip, dcc[idx].port, 0, 2);
+  {
+    const char *ipver = (addr.family == AF_INET6) ? "IPv6" : "IPv4";
+    strlcpy(server_ipver, ipver, sizeof(server_ipver));
 
-  if (serv < 0) {
-    putlog(LOG_SERV, "*", "Failed connect to %s (%s)", dcc[idx].host, strerror(errno));
-    trying_server = 0;
-    lostdcc(idx);
-  } else {
-    int i = 1;
+    int sock = -1;
+    in_port_t chosen_port = 0;
+    /* Per-bot effective mode: ssl_use=2 is plain except for +c (chanhub)
+     * bots, which are SSL-mandatory. Never fall back to the other protocol. */
+    const bool wanted_ssl = (effective_ssl_use() >= 1);
+    in_port_t try_port = dcc[idx].port;
 
-    /* set these now so if we fail disconnect_server() can cleanup right. */
-    dcc[idx].sock = serv;
-    servidx = idx;
-    sdprintf("Connecting to '%s' (serv: %d, servidx: %d)", dcc[idx].host, serv, servidx);
-    setsockopt(serv, 6, TCP_NODELAY, &i, sizeof(int));
+    /* Keep port and protocol coherent: never send plaintext to the SSL
+     * default port, nor TLS to the plaintext default port. An explicit port
+     * is trusted (next_server already matched the entry's SSL flag). */
+    if (!try_port)
+      try_port = wanted_ssl ? default_port_ssl : default_port;
+    else if (wanted_ssl && try_port == default_port)
+      try_port = default_port_ssl;
+    else if (!wanted_ssl && try_port == default_port_ssl)
+      try_port = default_port;
+
+    putlog(LOG_SERV, "*", "%s %s:%d [%s]",
+           wanted_ssl ? "Trying SSL server" : "Trying server",
+           host, try_port, ipver);
+
+    sock = open_telnet(ip, try_port, 0, 2);
+    if (sock < 0) {
+      putlog(LOG_SERV, "*", "Failed connect to %s:%d (%s)", host, try_port, strerror(errno));
+    } else {
 #ifdef EGG_SSL_EXT
-    if (ssl_use) { /* kyotou */
-      if (net_switch_to_ssl(serv) == 0) {
-        putlog(LOG_SERV, "*", "SSL Failed to connect to %s (Error while switching to SSL)", dcc[servidx].host);
-        trying_server = 0;
-        lostdcc(servidx);
-        delete[] ip;
-        return;
+      if (wanted_ssl && net_switch_to_ssl(sock) == 0) {
+        putlog(LOG_SERV, "*", "SSL Failed to connect to %s:%d (Error while switching to SSL)", host, try_port);
+        killsock(sock);
+        sock = -1;
       }
-    }
+#else
+      if (wanted_ssl) {
+        putlog(LOG_SERV, "*", "SSL required for %s:%d but this build has no SSL support", host, try_port);
+        killsock(sock);
+        sock = -1;
+      }
 #endif
-    /* Queue standard login */
+      if (sock >= 0)
+        chosen_port = try_port;
+    }
+
+    if (sock < 0) {
+      trying_server = 0;
+      lostdcc(idx);
+      delete[] ip;
+      return;
+    }
+
+    dcc[idx].port = chosen_port;
+    server_using_ssl = wanted_ssl ? 1 : 0;
+    serv = sock;
+    dcc[idx].sock = sock;
+    servidx = idx;
+
+    sdprintf("Connecting to '%s' (serv: %d, servidx: %d)", dcc[idx].host, serv, servidx);
+  }
+
+  {
     dcc[idx].timeval = now;
     SERVER_SOCKET.timeout_val = &server_timeout;
     /* Another server may have truncated it, so use the original */
@@ -2239,7 +2304,6 @@ static void server_dns_callback(int id, void *client_data, const char *host,
       dprintf(DP_MODE, "PASS %s\n", serverpass);
     dprintf(DP_MODE, "NICK %s\n", botname);
     dprintf(DP_MODE, "USER %s localhost %s :%s\n", botuser, dcc[idx].host, replace_vars(botrealname));
-    /* Wait for async result now */
   }
 
   delete[] ip;
