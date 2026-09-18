@@ -1,6 +1,6 @@
 #! /bin/sh
 
-PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:${HOME}/bin
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/pkg/bin:${HOME}/bin
 
 if [ -d .git ]; then
   BUILDTS=$(git log -1 --pretty=format:%ct HEAD)
@@ -18,7 +18,16 @@ rm -f ts > /dev/null 2>&1
 
 #Display banner
 clear
-head -n 8 README
+cat <<'WRAITH_BANNER'
+                        __  __   __
+__  _  ______________  |__|/  |_|  |__
+\ \/ \/ /\_  __ \__  \ |  \    _\  |  \
+ \     /  |  | \// __ \|  ||  | |   \  \
+  \/\_/   |__|  (____  /__||__| |___|  /
+                     \/              \/
+       http://wraith.botpack.net
+            @wraithbotpack
+WRAITH_BANNER
 
 echo -e "Version:   ${ver}\nBuild:     ${builddate}"
 echo ""
@@ -29,7 +38,7 @@ usage()
     echo
     echo "    The options are as follows:"
     echo "    -b        Use bzip2 instead of gzip when packaging."
-    echo "    -c        Cleans up old binaries/files before compile."
+    echo "    -c        Removes old tarballs and versioned binaries before compile."
     echo "    -C        Preforms a distclean before making."
     echo "    -d        Builds a debug package."
     echo "    -n        Do not package the binaries."
@@ -106,6 +115,20 @@ then
   echo "[!] Automated packaging disabled, `uname` isn't recognized"
 fi
 
+# Use gmake on BSD systems where default make is BSD make
+case "$os" in
+  FreeBSD|OpenBSD|NetBSD)
+    if command -v gmake >/dev/null 2>&1; then
+      MAKE=gmake
+    else
+      MAKE=make
+    fi
+    ;;
+  *)
+    MAKE=make
+    ;;
+esac
+
 if [ $compile = "1" ]; then
 
  echo "[*] Building ${PACKNAME} for $os"
@@ -113,7 +136,7 @@ if [ $compile = "1" ]; then
  if [ $clean = "2" ]; then
   if test -f Makefile; then
    echo "[*] DistCleaning old files..."
-   make distclean > /dev/null
+    ${MAKE} distclean > /dev/null
   fi
  fi
 
@@ -125,7 +148,7 @@ if [ $compile = "1" ]; then
 
  if [ $clean = "1" ]; then
   echo "[*] Cleaning up old binaries/files..."
-  make clean > /dev/null
+  rm -f ${tb}.* *.tar.*
  fi
 fi
 
@@ -133,19 +156,22 @@ _build()
 {
  if [ $compile = "1" ]; then
   echo "[*] Building ${dmake}${tb}..."
-  make ${dmake}${tb}
+    if [ $debug = "1" ]; then
+    ${MAKE} debug
+  else
+    ${MAKE} dynamic
+  fi
   if ! test -f ${tb}; then
     echo "[!] ${dmake}${tb} build failed"
     exit 1
   fi
  fi
- if [ $nopkg = "0" -o $pkg = "1" ]; then
+ if [ $compile = "1" -o $pkg = "1" ]; then
   echo "[*] Hashing and initializing settings in binary"
+   rm -f ${tb}.$os-$ver${d}
    cp ${tb} ${tb}.$os-$ver${d} > /dev/null 2>&1
   ./${tb}.$os-$ver${d} -q ${pack}
   rm=1
- elif [ $nopkg = "0" ]; then
-   mv ${tb} ${tb}.$os-$ver${d} > /dev/null 2>&1
  fi
 }
 
@@ -169,4 +195,6 @@ if [ $nopkg = "0" -o $pkg = "1" ]; then
     rm -f *$os-$ver${d}
   fi
   echo "Binaries are now in '${PACKNAME}.$os-$ver${d}.tar.${ext}'."
+elif [ $nopkg = "1" ]; then
+  echo "Binary is now at 'wraith.$os-$ver${d}'."
 fi

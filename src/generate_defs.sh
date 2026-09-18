@@ -9,7 +9,7 @@ if [ -z "$SED" -o -z "$CXX" ]; then
   exit 1
 fi
 #echo "==== Generating lib symbols ===="
-: ${INCLUDES:="${TCL_INCLUDES} ${SSL_INCLUDES}"}
+: ${INCLUDES:="${SSL_INCLUDES}"}
 
 mkdir -p src/.defs > /dev/null 2>&1
 TMPFILE=$(mktemp "/tmp/pre.XXXXXX")
@@ -70,6 +70,9 @@ for file in ${files}; do
   $CXX $CXXFLAGS -E -I. -I.. -I../lib ${INCLUDES} -DHAVE_CONFIG_H -DGENERATING_DEFS "../${file}" > "${TMPFILE}"
   # Fix wrapped prototypes
   $SED -e :a -e N -e '$!ba' -e 's/,\n/,/g' "${TMPFILE}" > "${TMPFILE}.sed"
+  mv "${TMPFILE}.sed" "${TMPFILE}"
+  # Strip __asm() directives from headers (NetBSD OpenSSL uses these for symbol renaming)
+  $SED -e 's/ *__asm([^)]*)//g' "${TMPFILE}" > "${TMPFILE}.sed"
   mv "${TMPFILE}.sed" "${TMPFILE}"
   cd ..
 

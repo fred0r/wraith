@@ -3,14 +3,14 @@
 #
 #
 
-SHELL = @SHELL@
-top_srcdir = @top_srcdir@
-srcdir = @srcdir@
-VPATH = @srcdir@
+SHELL = /bin/sh
+top_srcdir = .
+srcdir = .
 
-@SET_MAKE@
-CCDEPMODE = @CCDEPMODE@
-BINEXEC = wraith@EXEEXT@
+
+
+CCDEPMODE = gcc3
+BINEXEC = wraith
 
 STATICMAKEFILES = lib/Makefile src/Makefile Makefile
 CONFIGFILES = build/config.cache build/config.log build/config.status src/config.h src/buildinfo.h
@@ -30,21 +30,21 @@ DISTRIB = wraith-$(VERSION)
 HELPFILE = doc/help.txt
 
 # defaults
-CXX = @CXX@
-CC = @CC@
-LD_DYNAMIC = @CXX@
-LD_DEBUG = @CXX@
-STRIP = @STRIP@
-DIFF = @DIFF@
+CXX = clang++ -std=c++11 -std=c++14 -pipe
+CC = clang++ -x c
+LD_DYNAMIC = clang++ -std=c++11 -std=c++14 -pipe
+LD_DEBUG = clang++ -std=c++11 -std=c++14 -pipe
+STRIP = strip
+DIFF = diff
 
-#LIBS = @LIBS@
-LIBS = @LIBS@
-INCLUDES = @SSL_INCLUDES@
+#LIBS = -ldl 
+LIBS = -ldl 
+INCLUDES = -I/usr/include -DOPENSSL_API_COMPAT=0x10000000L
 
-DEBCXXFLAGS = -DDEBUG -fno-inline -g3 -ggdb3 -fno-omit-frame-pointer -fno-optimize-sibling-calls -Wshadow -Wpointer-arith @GCC3DEB@ @GCC4DEB@ @DEBCXXFLAGS@
-DEBLDFLAGS= @DEBLDFLAGS@
-CFLGS = @GCC3_CFLAGS@
-CXXFLAGS = $(CFLGS) @CXXFLAGS@ @GCC3_CXXFLAGS@ -fno-rtti
+DEBCXXFLAGS = -DDEBUG -fno-inline -g3 -ggdb3 -fno-omit-frame-pointer -fno-optimize-sibling-calls -Wshadow -Wpointer-arith -Wno-disabled-optimization -Wmissing-format-attribute -Wwrite-strings -Wformat -Wformat-security   -Og -fstack-protector-all -Wconditional-uninitialized
+DEBLDFLAGS= 
+CFLGS = -W -Wno-unused-parameter -Wdisabled-optimization -Wno-write-strings -Wno-format-security -Wno-format-y2k
+CXXFLAGS = $(CFLGS) -g -O2 -Wall -fcolor-diagnostics -Wno-invalid-source-encoding -Wno-narrowing -Wno-cast-function-type -Wno-cast-function-type-mismatch -Wno-cast-function-type-strict -fstack-protector -fstack-protector-strong -Woverloaded-virtual -fno-rtti
 
 MAKEFLAGS = -s
 
@@ -70,14 +70,14 @@ test:
 	+@cd lib && $(MAKE) test
 
 cleanutils:
-	@rm -f src/sorthelp@EXEEXT@
+	@rm -f src/sorthelp
 
 clean:  cleanutils
 	+@cd src && $(MAKE) clean
 	-+@cd lib && $(MAKE) clean
 	@rm -f src/.defs/*.stamp
 	@rm -f $(BINEXEC) build/stamp.* *~ src/*~ configure.temp .mangled stamp.*
-	@rm -f ts@EXEEXT@
+	@rm -f ts
 
 distclean: clean
 	@rm -rf *-$(VERSION)/ autom4te.cache/ autoscan.log configure.scan
@@ -129,7 +129,7 @@ sort: sorthelp
 #	@(sed $(HELPFILE) -e "s/^$$/ /" > help~ && mv -f help~ $(HELPFILE)) || rm -f help~
 	@(sed -r -e :a -e 's/^$$/ /' -e '$$!N;s/^ \n:/:/;ta' -e 'P;D' $(HELPFILE) > help~ && mv -f help~ $(HELPFILE)) || rm -f help~
 	@cp -f $(HELPFILE) help.txt~
-	@(src/sorthelp@EXEEXT@ $(HELPFILE) $(HELPFILE) || (cp -f help.txt~ $(HELPFILE); echo "Sort failed, restoring backup."))
+	@(src/sorthelp $(HELPFILE) $(HELPFILE) || (cp -f help.txt~ $(HELPFILE); echo "Sort failed, restoring backup."))
 	@rm -f help.txt~
 
 sorthelp: src/sorthelp.cc

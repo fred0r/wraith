@@ -45,7 +45,6 @@ OBJS = auth.So \
 	garble.So \
 	libcrypto.So \
 	libssl.So \
-	libtcl.So \
 	log.So \
 	main.So \
 	match.So \
@@ -64,11 +63,20 @@ OBJS = auth.So \
 	userent.So \
 	userrec.So \
 	users.So \
+	mod/channels.mod/chanmisc.So \
 	mod/channels.mod/channels.So \
+	mod/channels.mod/cmdschan.So \
+	mod/channels.mod/userchan.So \
 	mod/console.mod/console.So \
 	mod/ctcp.mod/ctcp.So \
+	mod/irc.mod/chan.So \
+	mod/irc.mod/cmdsirc.So \
 	mod/irc.mod/irc.So \
+	mod/irc.mod/mode.So \
+	mod/irc.mod/msgcmds.So \
+	mod/server.mod/cmdsserv.So \
 	mod/server.mod/server.So \
+	mod/server.mod/servmsg.So \
 	mod/share.mod/share.So \
 	mod/transfer.mod/transfer.So \
 	mod/update.mod/update.So \
@@ -81,6 +89,7 @@ OBJS = auth.So \
 	compat/strsep.o \
 	crypto/aes_util.o \
 	crypto/bf_util.o \
+	crypto/chacha_util.o \
 	crypto/dh_util.o
 
 MAKE_GENERIC = $(MAKE) 'MAKE=$(MAKE)' 'MAKEFLAGS=$(MAKEFLAGS)' 'CXX=$(CXX)' 'LD=$(LD)' 'STRIP=$(STRIP)' 'CXXFLAGS=$(CXXFLAGS)' 'CFLGS=$(CFLGS)' 'CCDEPMODE=$(CCDEPMODE)'
@@ -116,7 +125,7 @@ sorthelp: sorthelp.cc $(top_builddir)/lib/bdlib/libbdlib.a
 ../$(EGGEXEC): $(OBJS) $(top_builddir)/lib/bdlib/libbdlib.a @LIBELF_BUNDLED@ $(EXPORTS)
 	@echo -e "[LD ]	\033[1m$@\033[0m"
 	$(LD) $(LDFLAGS) -o ../$(EGGEXEC) $(OBJS) $(top_builddir)/lib/bdlib/libbdlib.a \
-	    $(LIBS) @LIBELF_LIB@ -Wl,--dynamic-list=$(EXPORTS)
+	    $(LIBS) @SSL_LIBS@ @LIBELF_LIB@ -Wl,--dynamic-list=$(EXPORTS)
 	@$(STRIP) ../$(EGGEXEC)
 	@$(OBJCOPY) ../$(EGGEXEC)
 	@echo "Successful compile: $(EGGEXEC)"

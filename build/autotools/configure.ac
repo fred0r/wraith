@@ -36,6 +36,11 @@ CXX_FLAG_CHECK([CXXFLAGS], [-fcolor-diagnostics], [colordiagnostics])
 CXX_FLAG_CHECK_NO([CXXFLAGS], [-Winvalid-source-encoding], [-Wno-invalid-source-encoding], [invalid_source_encoding])
 CXX_FLAG_CHECK_NO([CXXFLAGS], [-Wnarrowing], [-Wno-narrowing], [nonarrowing])
 CXX_FLAG_CHECK_NO([CXXFLAGS], [-Wcast-function-type], [-Wno-cast-function-type], [no_cast_function_type])
+CXX_FLAG_CHECK_NO([CXXFLAGS], [-Wcast-function-type-mismatch], [-Wno-cast-function-type-mismatch], [no_cast_function_type_mismatch])
+CXX_FLAG_CHECK_NO([CXXFLAGS], [-Wcast-function-type-strict], [-Wno-cast-function-type-strict], [no_cast_function_type_strict])
+# Handled by stringfix.cc which wraps STR() in "%s", for printf-like
+# format arguments.
+#CXX_FLAG_CHECK_NO([CXXFLAGS], [-Wformat-security], [-Wno-format-security], [no_format_security])
 CXX_FLAG_CHECK([CXXFLAGS], [-Wimplicit-fallthrough=0], [wimplicit_fallthrough])
 CXX_FLAG_CHECK([CXXFLAGS], [-fstack-protector], [stackprotector])
 CXX_FLAG_CHECK([CXXFLAGS], [-fstack-protector-strong], [stackprotectorstrong])
@@ -95,8 +100,7 @@ EGG_CHECK_SOCKLEN_T
 # Check for inconsistent random() functions
 EGG_CHECK_RANDOM_MAX
 
-# Create static binaries
-EGG_CHECK_CCSTATIC
+
 AC_SUBST(DEBCXXFLAGS)
 AC_SUBST(DEBLDFLAGS)
 
@@ -123,61 +127,6 @@ AC_CACHE_SAVE
 #AC_CHECK_HEADERS(openssl/ssl.h openssl/crypto.h)
 #AC_CHECK_HEADERS(zlib.h)
 CHECK_SSL
-
-# TCL checks
-
-# Tcl version to recommend if no Tcl is found, and the site where it can be
-# found for download.
-tclrecommendver="8.5.X"
-tclrecommendsite="ftp://tcl.activestate.com/pub/tcl/tcl8_5/"
-
-# Tcl library filename prefixes, suffixes, and search paths.
-tcllibnames="tcl8.6 tcl86 tcl8.5 tcl85 tcl8.4 tcl84 tcl8.3 tcl83 tcl8.2 tcl82 \
-             tcl8.1 tcl81 tcl8.0 tcl80 tcl tcl7.6 tcl76 tcl7.5 tcl75 \
-             tcl7.4 tcl74 tcl7.3 tcl73 tcl7.2 tcl72 tcl7.1 tcl71 \
-             tcl7.0 tcl70"
-
-tcllibextensions=".so .so.1 .so.1.0 .so.1.1 .so.1.2 .dll .dylib .sl .a"
-
-tcllibpaths="$HOME/lib $HOME/tcl/lib \
-             /usr/local/lib /usr/lib /lib /lib64 /usr/lib64 \
-             /usr/local/lib/tcl8.6 /usr/lib/tcl8.6 \
-             /usr/local/lib/tcl8.5 /usr/lib/tcl8.5 \
-             /usr/local/lib/tcl8.4 /usr/lib/tcl8.4 \
-             /usr/local/lib/tcl8.3 /usr/lib/tcl8.3 \
-             /usr/local/pkgs/tcl/lib /sys/lib /usr/pkg/lib \
-             /usr/i486-linuxaout/lib /beos/system/lib $HOME"
-
-# Tcl header filenames and search paths.
-tclheadernames="tcl.h"
-tclheaderpaths="$HOME/include $HOME/tcl/include \
-                /usr/local/include /usr/include \
-                /usr/local/include/tcl8.6 /usr/include/tcl8.6 \
-                /usr/local/include/tcl8.5 /usr/include/tcl8.5 \
-                /usr/local/include/tcl8.4 /usr/include/tcl8.4 \
-                /usr/local/include/tcl8.3 /usr/include/tcl8.3 \
-                /usr/local/pkgs/tcl/include /sys/include \
-                /usr/pkg/lib /beos/system/include /beos/devel/include $HOME"
-
-
-# Misc Tcl checks.
-EGG_TCL_OPTIONS
-EGG_TCL_ENV
-EGG_TCL_WITH_TCLLIB
-EGG_TCL_WITH_TCLINC
-EGG_TCL_FIND_LIBRARY
-EGG_TCL_FIND_HEADER
-EGG_TCL_CHECK_LIBRARY
-EGG_TCL_CHECK_HEADER
-EGG_TCL_DETECT_CHANGE
-EGG_TCL_CHECK_VERSION
-EGG_TCL_CHECK_PRE70
-EGG_TCL_TESTLIBS
-EGG_TCL_CHECK_FREE
-#EGG_TCL_CHECK_GETCURRENTTHREAD
-#EGG_TCL_CHECK_GETTHREADDATA
-EGG_TCL_CHECK_SETNOTIFIER
-EGG_TCL_LIB_REQS
 
 AC_CACHE_SAVE
 
