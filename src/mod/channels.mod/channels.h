@@ -6,23 +6,17 @@
 #ifndef _EGG_MOD_CHANNELS_CHANNELS_H
 #define _EGG_MOD_CHANNELS_CHANNELS_H
 
+#include "module.h"
+
 #define MASKREASON_MAX	307	/* Max length of ban/invite/exempt/etc.
 				   reasons.				*/
 #define MASKREASON_LEN	(MASKREASON_MAX + 1)
 
-
-#ifdef MAKING_CHANNELS
-
-#define PLSMNS(x) (x ? '+' : '-')
-
-
-static void check_expired_masks(void);
-static void tell_masks(const char type, int idx, bool show_inact, char *match, bool all = 0);
-static void get_mode_protect(struct chanset_t *chan, char *s, size_t ssiz);
-static void set_mode_protect(struct chanset_t *chan, char *set);
-static int count_mask(maskrec *);
-
-#endif				/* MAKING_CHANNELS */
+class ChannelsModule : public wraith::Module {
+public:
+  void init() override;
+  const char *name() const override { return "channels"; }
+};
 
 namespace bd {
   class Stream;
@@ -57,7 +51,7 @@ bool u_match_mask(const maskrec *, const char *) __attribute__((pure));
 bool ismasked(const masklist *, const char *) __attribute__((pure));
 bool ismodeline(const masklist *, const char *) __attribute__((pure));
 void channels_report(int, int);
-void channels_writeuserfile(bd::Stream&, int = 0);
+void channels_writeuserfile(bd::Stream&, int = 0, int peer_numver = -1);
 void rcmd_chans(const char *, const char *, const char *);
 
 

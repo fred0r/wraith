@@ -25,48 +25,18 @@
  */
 
 
-#define MAKING_CHANNELS
-#include "src/common.h"
-#include "src/mod/share.mod/share.h"
-#include "src/mod/irc.mod/irc.h"
-#include "src/mod/server.mod/server.h"
-#include "src/chanprog.h"
-#include "src/egg_timer.h"
-#include "src/misc.h"
-#include "src/main.h"
-#include "src/color.h"
-#include "src/userrec.h"
-#include "src/users.h"
-#include "src/set.h"
-#include "src/rfc1459.h"
-#include "src/match.h"
-#include "src/settings.h"
-#include "src/tandem.h"
-#include "src/botnet.h"
-#include "src/botmsg.h"
-#include "src/net.h"
-#include "src/binds.h"
-#include "src/cmds.h"
-#include <bdlib/src/String.h>
+#include "channels_shared.h"
+
+bool 			use_info = 1;
+char 			glob_chanmode[64] = "nt";		/* Default chanmode (drummer,990731) */
+interval_t 			global_ban_time;
+interval_t			global_exempt_time;
+interval_t 			global_invite_time;
 
 
-#include <sys/stat.h>
-
-static bool 			use_info = 1;
-static char 			glob_chanmode[64] = "nt";		/* Default chanmode (drummer,990731) */
-static interval_t 			global_ban_time;
-static interval_t			global_exempt_time;
-static interval_t 			global_invite_time;
-
-
-static char *lastdeletedmask = NULL;
+char *lastdeletedmask = NULL;
 
 static int 			killed_bots = 0;
-
-#include "channels.h"
-#include "cmdschan.cc"
-#include "chanmisc.cc"
-#include "userchan.cc"
 
 /* This will close channels if the HUB:leaf count is skewed from config setting */
 static void 
@@ -120,11 +90,24 @@ static void got_cset(char *botnick, char *code, char *par)
        putlog(LOG_ERROR, "*", "Got bad cset: bot: %s code: %s par: %s %s", botnick, code, chname, par);
        return;
      }
-     if (isdefault)
-       chan = chanset_default;
-     else if (!(chan = findchan_by_dname(chname)))
-       return;
-   }
+      if (isdefault)
+        chan = chanset_default;
+      else if (!(chan = findchan_by_dname(chname))) {
+        /* Channel doesn't exist on this bot. If this is a group change
+         * (e.g. hub changed groups from fuenf to znc), bots in the new
+         * group need the channel entry to evaluate join. Create it from
+         * the cset data (channel_add merges defaults + chanset_default).
+         * check_shouldjoin() will decide whether to actually join. */
+        char result[RESULT_LEN];
+        if (channel_add(result, chname, par, false) == ERROR) {
+          putlog(LOG_MISC, "*", "Failed to create channel %s from cset: %s", chname, result);
+          return;
+        }
+        chan = findchan_by_dname(chname);
+        if (!chan)
+          return;
+      }
+    }
 
   if (all)
    chan = NULL;
@@ -265,14 +248,17 @@ static void got_cycle(char *botnick, char *code, char *par)
   if (!(chan = findchan_by_dname(chname)))
    return;
 
-  interval_t delay = 10;
+  /* Per-bot staggered delay from nick hash.
+   * All bots part together but rejoin at different times (5-30s),
+   * so the first to rejoin gets ops. */
+  unsigned int nick_hash = 0;
+  for (const char *p = conf.bot->nick; *p; p++)
+    nick_hash = nick_hash * 31 + (unsigned char)*p;
+  interval_t delay = (nick_hash % 26) + 5;
 
-  if (par[0])
-    delay = atoi(newsplit(&par));
-  
   do_chanset(NULL, chan, "+inactive", DO_LOCAL);
   dprintf(DP_SERVER, "PART %s\n", chan->name);
-  chan->channel.jointime = ((now + delay) - server_lag); 		/* rejoin in 10 seconds */
+  chan->channel.jointime = ((now + delay) - server_lag);
 }
 
 static void got_down(char *botnick, char *code, char *par)
@@ -306,9 +292,15 @@ check_slowjoinpart(struct chanset_t *chan)
   /* slowpart */
   if (chan->channel.parttime && (chan->channel.parttime < now)) {
     chan->channel.parttime = 0;
+    chan->channel.groupchange_op_sent = 0;
     dprintf(DP_MODE, "PART %s\n", chan->name);
-    if (chan) /* this should NOT be necesary, but some unforseen bug requires it.. */
-      remove_channel(chan);
+    /* parttime is only set by check_shouldjoin() for group-change-triggered
+     * parts. Always use clear_channel() to preserve the chanset entry and all
+     * per-channel settings (fastop, backup, bitch, protect, etc.) across group
+     * changes. Previously, -inactive channels used remove_channel() which
+     * destroyed the entry, causing got_cset() to recreate it from scratch
+     * with chanset_default settings — losing any per-channel overrides. */
+    clear_channel(chan, 1);
     return 1;		/* if we keep looping, we'll segfault. */
   /* slowjoin */
   } else if ((chan->channel.jointime) && (chan->channel.jointime < now)) {
@@ -333,6 +325,26 @@ check_limitraise(struct chanset_t *chan) {
   }
 }
 
+/* While waiting to be invited into a +i channel, re-request help instead of
+ * relying on the 60s minutely check. request_in() arms the bounded retry
+ * (invite_retry/invite_retry_ct); this fires it on the 10s tick. */
+static void
+check_invite_retry(struct chanset_t *chan)
+{
+  if (channel_active(chan) || !shouldjoin(chan)) {
+    chan->channel.invite_retry = 0;
+    chan->channel.invite_retry_ct = 0;
+    return;
+  }
+
+  /* Mid-join or waiting for the WHO; the 473 (if any) will arm the retry. */
+  if (channel_joining(chan) || channel_pending(chan))
+    return;
+
+  if (chan->channel.invite_retry && chan->channel.invite_retry <= now)
+    request_in(chan);
+}
+
 static void
 channels_timers()
 {
@@ -347,8 +359,11 @@ channels_timers()
 
     if ((cnt % 10) == 0) {
       /* 10 seconds */
-      if (!conf.bot->hub && check_slowjoinpart(chan))	/* if 1 is returned, chan was removed. */
-        continue;
+      if (!conf.bot->hub) {
+        check_invite_retry(chan);
+        if (check_slowjoinpart(chan))	/* if 1 is returned, chan was removed. */
+          continue;
+      }
     }
     if ((cnt % 60) == 0) {
       /* 60 seconds */
@@ -383,8 +398,10 @@ static void got_sp(int idx, char *code, char *par)
     if (conf.bot->hub) {
       remove_channel(chan);
       write_userfile(-1);
-    } else
+    } else {
       chan->channel.parttime = ((atoi(par) + now) - server_lag);
+      chan->channel.groupchange_op_sent = now;
+    }
   }
 }
 
@@ -413,8 +430,9 @@ static void got_jn(int idx, char *code, char *par)
 }
 #endif
 
-static void set_mode_protect(struct chanset_t *chan, char *set)
+void Channel::set_mode_protect(char *set)
 {
+  struct chanset_t *chan = this;
   int i, pos = 1;
   char *s = NULL, *s1 = NULL;
 
@@ -513,8 +531,9 @@ static void set_mode_protect(struct chanset_t *chan, char *set)
     chan->voice_moderate = 0;
 }
 
-static void get_mode_protect(struct chanset_t *chan, char *s, size_t ssiz)
+void Channel::get_mode_protect(char *s, size_t ssiz)
 {
+  struct chanset_t *chan = this;
   char *p = s, s1[121] = "";
   int tst;
 
@@ -638,9 +657,13 @@ void remove_channel(struct chanset_t *chan)
    if (chan->groups) {
      delete(chan->groups);
    }
+   if (chan->op_delegation_flush_timer) {
+     timer_destroy(chan->op_delegation_flush_timer);
+     chan->op_delegation_flush_timer = 0;
+   }
    delete chan->bot_roles;
    delete chan->role_bots;
-   free(chan);
+   delete static_cast<Channel *>(chan);
 }
 
 /* Bind this to chon and *if* the users console channel == ***
@@ -712,7 +735,7 @@ void channels_report(int idx, int details)
 	s[strlen(s) - 2] = 0;
       if (!s[0])
 	strlcpy(s, "lurking", sizeof(s));
-      get_mode_protect(chan, s2, sizeof(s2));
+      static_cast<Channel *>(chan)->get_mode_protect(s2, sizeof(s2));
       if (channel_closed(chan)) {
         if (chan->closed_invite)
           strlcat(s2, "i", sizeof(s2));
@@ -813,12 +836,22 @@ void channels_report(int idx, int details)
   }
 }
 
+static void got_go(char *botnick, char *code, char *par)
+{
+  if (!par || !par[0])
+    return;
+  struct chanset_t *chan = findchan_by_dname(par);
+  if (chan && chan->channel.parttime)
+    chan->channel.groupchange_op_sent = now;
+}
+
 cmd_t channels_bot[] = {
   {"cjoin",	"", 	(Function) got_cjoin, 	NULL, 0},
   {"cpart",	"", 	(Function) got_cpart, 	NULL, 0},
   {"cset",	"", 	(Function) got_cset,  	NULL, 0},
   {"cycle",	"", 	(Function) got_cycle, 	NULL, LEAF},
   {"down",	"", 	(Function) got_down,  	NULL, LEAF},
+  {"go",	"", 	(Function) got_go,    	NULL, 0},
   {"kl",	"", 	(Function) got_kl,    	NULL, 0},
   {"sj",	"", 	(Function) got_sj,    	NULL, 0},
   {"sp",	"", 	(Function) got_sp,    	NULL, 0},
@@ -834,7 +867,7 @@ cmd_t channels_bot[] = {
 };
 
 
-void channels_init()
+void ChannelsModule::init()
 {
   timer_create_secs(60, "check_expired_masks", (Function) check_expired_masks);
   if (conf.bot->hub) {

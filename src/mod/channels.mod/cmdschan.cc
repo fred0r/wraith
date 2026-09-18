@@ -25,6 +25,8 @@
  */
 
 
+#include "channels_shared.h"
+
 #include <ctype.h>
 #include "src/mod/console.mod/console.h"
 
@@ -1186,7 +1188,7 @@ static void cmd_chaninfo(int idx, char *par)
     else
       dprintf(idx, "Settings for channel %s:\n", chan->dname);
 /* FIXME: SHOW_CHAR() here */
-    get_mode_protect(chan, work, sizeof(work));
+    static_cast<Channel *>(chan)->get_mode_protect(work, sizeof(work));
     dprintf(idx, "Protect modes (chanmode): %s\n", work[0] ? work : "None");
     dprintf(idx, "Groups: %s\n", chan->groups && chan->groups->length() ? chan->groups->join(" ").c_str() : "None");
     dprintf(idx, "FiSH Key: %s\n", chan->fish_key[0] ? chan->fish_key : "not set");
@@ -1377,7 +1379,7 @@ static void cmd_chanset(int idx, char *par)
  *
  * NOTE: As with msg commands, the function is responsible for any logging.
  */
-static cmd_t C_dcc_channels[] =
+cmd_t C_dcc_channels[] =
 {
   {"+ban",	"o|o",	(Function) cmd_pls_ban,		NULL, AUTH},
   {"+exempt",	"o|o",	(Function) cmd_pls_exempt,	NULL, AUTH},

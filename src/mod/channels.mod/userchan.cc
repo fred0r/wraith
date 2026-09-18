@@ -24,6 +24,8 @@
  */
 
 
+#include "channels_shared.h"
+
 #include <bdlib/src/String.h>
 #include <bdlib/src/Stream.h>
 extern struct cmd_pass *cmdpass;
@@ -158,7 +160,7 @@ u_sticky_mask(const maskrec *u, const char *uhost)
 {
   for (; u; u = u->next)
     if (!rfc_casecmp(u->mask, uhost))
-      return (u->flags & MASKREC_STICKY);
+      return static_cast<const MaskList *>(u)->is_sticky();
   return 0;
 }
 
@@ -213,7 +215,7 @@ u_equals_mask(const maskrec *u, const char *mask)
 {
   for (; u; u = u->next)
     if (!rfc_casecmp(u->mask, mask)) {
-      if (u->flags & MASKREC_PERM)
+      if (static_cast<const MaskList *>(u)->is_perm())
         return 2;
       else
         return 1;
@@ -231,7 +233,7 @@ u_match_mask(const maskrec *rec, const char *mask)
   return 0;
 }
 
-static int
+int
 __attribute__((pure))
 count_mask(maskrec *rec)
 {
@@ -366,7 +368,7 @@ bool u_addmask(char type, struct chanset_t *chan, char *who, const char *from, c
   }
 
   if (p == NULL) {
-    p = (maskrec *) calloc(1, sizeof(maskrec));
+    p = new MaskList();
     p->next = *u;
     *u = p;
   }
@@ -422,7 +424,7 @@ static void display_mask(const char type, int idx, int number, maskrec *mask, st
     }
   } else
     dates[0] = 0;
-  if (mask->flags & MASKREC_PERM)
+  if (static_cast<const MaskList *>(mask)->is_perm())
     strlcpy(s, "(perm)", sizeof(s));
   else {
     char s1[41] = "";
@@ -430,7 +432,7 @@ static void display_mask(const char type, int idx, int number, maskrec *mask, st
     days(mask->expire, now, s1, sizeof(s1));
     simple_snprintf(s, sizeof(s), "(expires %s)", s1);
   }
-  if (mask->flags & MASKREC_STICKY)
+  if (static_cast<const MaskList *>(mask)->is_sticky())
     strlcat(s, " (sticky)", sizeof(s));
 
   /* always show mask on hubs */
@@ -453,7 +455,7 @@ static void display_mask(const char type, int idx, int number, maskrec *mask, st
     dprintf(idx, "        %s\n", dates);
 }
 
-static void tell_masks(const char type, int idx, bool show_inact, char *match, bool all)
+void tell_masks(const char type, int idx, bool show_inact, char *match, bool all)
 {
   int k = 1;
   char *chname = NULL;
@@ -461,6 +463,7 @@ static void tell_masks(const char type, int idx, bool show_inact, char *match, b
   maskrec *global_masks = (type == 'b' ? global_bans : type == 'e' ? global_exempts : global_invites);
   struct chanset_t *chan = NULL;
   maskrec *mr = NULL;
+  struct flag_record user = {FR_GLOBAL | FR_CHAN, 0, 0, 0};
 
   /* Was a channel given? */
   if (match && match[0]) {
@@ -716,7 +719,7 @@ static void write_chan(bd::Stream& stream, int idx, struct chanset_t* chan)
 bd::String channel_to_string(struct chanset_t* chan, bool force_inactive) {
   char w[1024] = "";
 
-  get_mode_protect(chan, w, sizeof(w));
+  static_cast<Channel *>(chan)->get_mode_protect(w, sizeof(w));
   return bd::String::printf("\
 chanmode { %s } groups { %s } bad-cookie %d manop %d mdop %d mop %d limit %d revenge %d ban-type %d \
 homechan-user %d \
@@ -837,7 +840,7 @@ void write_chans_compat(bd::Stream& stream, int idx)
     char inactive = 0;
 
     putlog(LOG_DEBUG, "*", "writing channel %s to userfile..", chan->dname);
-    get_mode_protect(chan, w, sizeof(w));
+    static_cast<Channel *>(chan)->get_mode_protect(w, sizeof(w));
 
     inactive = PLSMNS(channel_inactive(chan));
 
@@ -901,14 +904,14 @@ exempt-time %d invite-time %d voice-non-ident %d auto-delay %d \
   }
 }
 
-void channels_writeuserfile(bd::Stream& stream, int old)
+void channels_writeuserfile(bd::Stream& stream, int old, int peer_numver)
 {
   putlog(LOG_DEBUG, "@", "Writing channel/ban/exempt/invite entries.");
   if (old != 1)
     write_chans(stream, -1, old == 0 ? 0 : 1);
   else /* flood-* hacks */
     write_chans_compat(stream, -1);
-  write_vars_and_cmdpass(stream, -1);
+  write_vars_and_cmdpass(stream, peer_numver);
   write_bans(stream, -1);
   write_exempts(stream, -1);
   write_invites(stream, -1);
@@ -981,7 +984,7 @@ static void check_expired_mask(const char type)
 
   for (u = list; u; u = u2) { 
     u2 = u->next;
-    if (!(u->flags & MASKREC_PERM) && (now >= u->expire)) {
+    if (static_cast<const MaskList *>(u)->is_expired(now)) {
       putlog(LOG_MISC, "*", "No longer %s %s (expired)", str_typing, u->mask);
      if (!conf.bot->hub) {
       for (chan = chanset; chan; chan = chan->next) {
@@ -1022,7 +1025,7 @@ static void check_expired_mask(const char type)
 
     for (u = list; u; u = u2) {
       u2 = u->next;
-      if (!(u->flags & MASKREC_PERM) && (now >= u->expire)) {
+      if (static_cast<const MaskList *>(u)->is_expired(now)) {
         remove = 1;
         if (!conf.bot->hub && type == 'e') {
           match = 0;

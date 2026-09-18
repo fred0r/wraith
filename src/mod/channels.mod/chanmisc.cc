@@ -19,9 +19,12 @@
  */
 
 /*
- * tclchan.c -- part of channels.mod
+ * channelsmisc.c -- part of channels.mod
  *
  */
+
+
+#include "channels_shared.h"
 
 
 static int FindElement(char *resultBuf, const char *list, size_t listLength, 
@@ -327,7 +330,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
       strlcpy(chan->temp, item[i], sizeof(chan->temp));
       check_temp(chan);
  */
-    if (!strcmp(item[i], "chanmode")) {
+    if (!strcasecmp(item[i], "chanmode")) {
       i++;
       if (i >= items) {
 	if (result)
@@ -335,8 +338,8 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
 	return ERROR;
       }
       strlcpy(s, item[i], sizeof(s));
-      set_mode_protect(chan, s);
-    } else if (!strcmp(item[i], "groups")) {
+      static_cast<Channel *>(chan)->set_mode_protect(s);
+    } else if (!strcasecmp(item[i], "groups")) {
       i++;
       if (i >= items) {
 	if (result)
@@ -350,7 +353,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
       changroups.trim();
       *(chan->groups) = changroups.split(" ");
       changed_groups = true;
-    } else if (!strcmp(item[i], "topic")) {
+    } else if (!strcasecmp(item[i], "topic")) {
       char *p = NULL;
 
       i++;
@@ -362,7 +365,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
       p = replace(item[i], "{", "[");
       p = replace(p, "}", "]");
       strlcpy(chan->topic, p, sizeof(chan->topic));
-    } else if (!cmd && !strcmp(item[i], "addedby")) {
+    } else if (!cmd && !strcasecmp(item[i], "addedby")) {
       i++;
       if (i >= items) {
 	if (result)
@@ -370,7 +373,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
 	return ERROR;
       }
       strlcpy(chan->added_by, item[i], sizeof(chan->added_by));
-    } else if (!cmd && !strcmp(item[i], "addedts")) {
+    } else if (!cmd && !strcasecmp(item[i], "addedts")) {
       i++;
       if (i >= items) {
 	if (result)
@@ -378,7 +381,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
 	return ERROR;
       }
       chan->added_ts = atoi(item[i]);
-    } else if (!strcmp(item[i], "limit")) {
+    } else if (!strcasecmp(item[i], "limit")) {
       i++;
       if (i >= items) {
         if (result)
@@ -395,7 +398,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         add_mode(chan, '-', 'l', "");
       chan->limitraise = atoi(item[i]);
       chan->limit_prot = 0;
-    } else if (!strcmp(item[i], "fish-key")) {
+    } else if (!strcasecmp(item[i], "fish-key")) {
       i++;
       if (i >= items) {
         if (result)
@@ -406,7 +409,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
       key.trim();
       set_fish_key(chan->dname, key);
       strlcpy(chan->fish_key, key.c_str(), sizeof(chan->fish_key));
-    } else if (!strcmp(item[i], "ban-time")) {
+    } else if (!strcasecmp(item[i], "ban-time")) {
       i++;
       if (i >= items) {
         if (result)
@@ -414,7 +417,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->ban_time = atoi(item[i]);
-    } else if (!strcmp(item[i], "exempt-time")) {
+    } else if (!strcasecmp(item[i], "exempt-time")) {
       i++;
       if (i >= items) {
         if (result)
@@ -422,7 +425,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->exempt_time = atoi(item[i]);
-    } else if (!strcmp(item[i], "invite-time")) {
+    } else if (!strcasecmp(item[i], "invite-time")) {
       i++;
       if (i >= items) {
         if (result)
@@ -430,7 +433,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->invite_time = atoi(item[i]);
-    } else if (!strcmp(item[i], "capslimit") || !strcmp(item[i], "caps-limit")) {
+    } else if (!strcasecmp(item[i], "capslimit") || !strcasecmp(item[i], "caps-limit")) {
       i++;
       if (i >= items) {
         if (result)
@@ -444,7 +447,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->capslimit = capslimit;
-    } else if (!strcmp(item[i], "colorlimit") || !strcmp(item[i], "color-limit")) {
+    } else if (!strcasecmp(item[i], "colorlimit") || !strcasecmp(item[i], "color-limit")) {
       i++;
       if (i >= items) {
         if (result)
@@ -452,7 +455,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->colorlimit = atoi(item[i]);
-   } else if (!strcmp(item[i], "closed-ban")) {
+   } else if (!strcasecmp(item[i], "closed-ban")) {
       i++;
       if (i >= items) {
         if (result)
@@ -460,7 +463,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->closed_ban = atoi(item[i]);
-    } else if (!strcmp(item[i], "voice-moderate")) {
+    } else if (!strcasecmp(item[i], "voice-moderate")) {
       i++;
       if (i >= items) {
         if (result)
@@ -470,7 +473,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
       chan->voice_moderate = atoi(item[i]);
       if (chan->mode_mns_prot & CHANMODER && chan->voice_moderate)
         chan->voice_moderate = 0;
-    } else if (!strcmp(item[i], "closed-invite")) {
+    } else if (!strcasecmp(item[i], "closed-invite")) {
       i++;
       if (i >= items) {
         if (result)
@@ -480,7 +483,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
       chan->closed_invite = atoi(item[i]);
       if (chan->mode_mns_prot & CHANINV && chan->closed_invite)
         chan->closed_invite = 0;
-    } else if (!strcmp(item[i], "closed-private")) {
+    } else if (!strcasecmp(item[i], "closed-private")) {
       i++;
       if (i >= items) {
         if (result)
@@ -490,7 +493,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
       chan->closed_private = atoi(item[i]);
       if (chan->mode_mns_prot & CHANPRIV && chan->closed_private) 
         chan->closed_private = 0;
-    } else if (!strcmp(item[i], "voice-non-ident")) {
+    } else if (!strcasecmp(item[i], "voice-non-ident")) {
       i++;
       if (i >= items) {
         if (result)
@@ -498,7 +501,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->voice_non_ident = atoi(item[i]);
-    } else if (!strcmp(item[i], "bad-cookie")) {
+    } else if (!strcasecmp(item[i], "bad-cookie")) {
       i++;
       if (i >= items) {
         if (result)
@@ -506,7 +509,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->bad_cookie = deflag_translate(item[i]);
-    } else if (!strcmp(item[i], "manop")) {
+    } else if (!strcasecmp(item[i], "manop")) {
       i++;
       if (i >= items) {
         if (result)
@@ -514,7 +517,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->manop = deflag_translate(item[i]);
-    } else if (!strcmp(item[i], "mdop")) {
+    } else if (!strcasecmp(item[i], "mdop")) {
       i++;
       if (i >= items) {
         if (result)
@@ -522,7 +525,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->mdop = deflag_translate(item[i]);
-    } else if (!strcmp(item[i], "mop")) {
+    } else if (!strcasecmp(item[i], "mop")) {
       i++;
       if (i >= items) {
         if (result)
@@ -530,7 +533,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->mop = deflag_translate(item[i]);
-    } else if (!strcmp(item[i], "revenge")) {
+    } else if (!strcasecmp(item[i], "revenge")) {
       i++;
       if (i >= items) {
         if (result)
@@ -538,7 +541,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->revenge = deflag_translate(item[i]);
-    } else if (!strcmp(item[i], "knock")) {
+    } else if (!strcasecmp(item[i], "knock")) {
       i++;
       if (i >= items) {
         if (result)
@@ -561,7 +564,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         }
       } else
         chan->knock_flags = atoi(item[i]);
-    } else if (!strcmp(item[i], "flood-exempt")) {
+    } else if (!strcasecmp(item[i], "flood-exempt")) {
       i++;
       if (i >= items) {
         if (result)
@@ -582,7 +585,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         }
       } else
         chan->flood_exempt_mode = atoi(item[i]);
-    } else if (!strcmp(item[i], "closed-exempt")) {
+    } else if (!strcasecmp(item[i], "closed-exempt")) {
       i++;
       if (i >= items) {
         if (result)
@@ -603,7 +606,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         }
       } else
         chan->closed_exempt_mode = atoi(item[i]);
-    } else if (!strcmp(item[i], "flood-lock-time")) {
+    } else if (!strcasecmp(item[i], "flood-lock-time")) {
       i++;
       if (i >= items) {
         if (result)
@@ -611,7 +614,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->flood_lock_time = atoi(item[i]);
-    } else if (!strcmp(item[i], "auto-delay")) {
+    } else if (!strcasecmp(item[i], "auto-delay")) {
       i++;
       if (i >= items) {
         if (result)
@@ -619,7 +622,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->auto_delay = atoi(item[i]);
-    } else if (!strcmp(item[i], "ban-type")) {
+    } else if (!strcasecmp(item[i], "ban-type")) {
       i++;
       if (i >= items) {
         if (result)
@@ -627,7 +630,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->ban_type = atoi(item[i]);
-    } else if (!strcmp(item[i], "homechan-user")) {
+    } else if (!strcasecmp(item[i], "homechan-user")) {
       i++;
       if (i >= items) {
         if (result)
@@ -635,7 +638,7 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
         return ERROR;
       }
       chan->homechan_user = homechan_user_translate(item[i]);
-    } else if (!strcmp(item[i], "protect-backup")) {
+    } else if (!strcasecmp(item[i], "protect-backup")) {
       i++;
       if (i >= items) {
         if (result)
@@ -965,6 +968,7 @@ static void init_channel(struct chanset_t *chan, bool reset)
   chan->channel.mode = 0;
   chan->channel.members = 0;
   chan->channel.splitmembers = 0;
+  chan->channel.lonely_whined = 0;
 
   if (!reset)
     my_setkey(chan, NULL);
@@ -1060,6 +1064,11 @@ void clear_channel(struct chanset_t *chan, bool reset)
   delete chan->channel.hashed_members;
   chan->channel.hashed_members = NULL;
 
+  if (chan->op_delegation_flush_timer) {
+    timer_destroy(chan->op_delegation_flush_timer);
+    chan->op_delegation_flush_timer = 0;
+  }
+
   if (reset)
     init_channel(chan, 1);
   for (size_t i = 0; i < MODES_PER_LINE_MAX; ++i) {
@@ -1127,7 +1136,7 @@ int channel_add(char *result, const char *newname, const char *options,
     /* Already existing channel, maybe a reload of the channel file */
     chan->status &= ~CHAN_FLAGGED;	/* don't delete me! :) */
   } else {
-    chan = (struct chanset_t *) calloc(1, sizeof(struct chanset_t));
+    chan = new Channel();
 
     /* These are defaults, bzero already set them 0, but we set them for future reference */
     chan->limit_prot = 0;
