@@ -28,6 +28,8 @@
 #include <fcntl.h>
 #include "common.h"
 #include "net.h"
+
+#include <openssl/crypto.h>
 #include "socket.h"
 #include "misc.h"
 #include "main.h"
@@ -44,6 +46,7 @@
 #include <string.h>
 #include <netdb.h>
 #include <signal.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <setjmp.h>
@@ -59,6 +62,16 @@
 #if HAVE_UNISTD_H
 #  include <unistd.h>
 #endif /* HAVE_UNITSTD_H */
+
+/* Socket descriptors outside [0, FD_SETSIZE) may not be passed to
+ * FD_SET/FD_ISSET; doing so is undefined behavior and can smash the
+ * stack/heap around the fd_set. Guard every use.
+ */
+static inline bool
+fd_in_range(int fd)
+{
+  return fd >= 0 && fd < FD_SETSIZE;
+}
 
 extern egg_traffic_t 	traffic;
 
@@ -144,10 +157,16 @@ void init_net()
 {
   MAXSOCKS = max_dcc + 10;
 
-  if (socklist)
-    socklist = (sock_list *) realloc((void *) socklist, sizeof(sock_list) * MAXSOCKS);
-  else
+  if (socklist) {
+    sock_list *tmp = (sock_list *) realloc((void *) socklist, sizeof(sock_list) * MAXSOCKS);
+    if (!tmp)
+      return;
+    socklist = tmp;
+  } else {
     socklist = (sock_list *) calloc(1, sizeof(sock_list) * MAXSOCKS);
+    if (!socklist)
+      return;
+  }
 
   for (int i = 0; i < MAXSOCKS; i++) {
     bzero(&socklist[i], sizeof(socklist[i]));
@@ -309,7 +328,7 @@ sock_write(bd::Stream &stream, int fd)
   if (socklist[fd].sock > 0) {
     bd::String buf;
 
-    stream << bd::String::printf(STR("-sock\n"));
+    stream << bd::String::printf("%s", STR("-sock\n"));
     stream << bd::String::printf(STR("sock %d %d\n"), socklist[fd].sock, socklist[fd].flags);
 #ifdef USE_IPV6
     stream << bd::String::printf(STR("af %u\n"), socklist[fd].af);
@@ -318,7 +337,7 @@ sock_write(bd::Stream &stream, int fd)
       stream << bd::String::printf(STR("host %s\n"), socklist[fd].host);
     if (socklist[fd].port)
       stream << bd::String::printf(STR("port %d\n"), socklist[fd].port);
-    stream << bd::String::printf(STR("+sock\n"));
+    stream << bd::String::printf("%s", STR("+sock\n"));
   }    
 }
 
@@ -461,7 +480,7 @@ static int proxy_connect(int sock, const char *ip, in_port_t port, int proxy_typ
       simple_snprintf(s, sizeof s,
                    "\004\001%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%s",
                    (port >> 8) % 256, (port % 256), x[0], x[1], x[2], x[3],
-                   x[4], x[5], x[6], x[7], x[9], x[9], x[10], x[11],  x[12],
+                    x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11],  x[12],
                    x[13], x[14], x[15], botuser);
     else
 #endif /* USE_IPV6 */
@@ -619,10 +638,20 @@ int net_switch_to_ssl(int sock) {
   int i = 0;
 
   debug0("net_switch_to_ssl()");
-  sleep(3); // Give some time to let the connect() go through.
+
+  /* Wait for the connect() to complete using poll() instead of sleep() */
+  struct pollfd pfd;
+  pfd.fd = sock;
+  pfd.events = POLLOUT | POLLERR;
+  int pollret = poll(&pfd, 1, 5000); /* 5 second timeout */
+  if (pollret <= 0) {
+    debug0("net_switch_to_ssl(): poll() timeout or error");
+    return 0;
+  }
+
   i = findanysnum(sock);
-  if (i == MAXSOCKS) {
-    debug0("Error while swithing to SSL - sock not found in list");
+  if (i == -1) {
+    debug0("Error while switching to SSL - sock not found in list");
     return 0;
   }
 
@@ -749,7 +778,7 @@ int open_address_listen(const char* ip, in_port_t *port) {
     else
       debug3("Opening listen socket on %s:%d with AF_INET, sock: %d", ip, *port, sock);
 
-    bzero((char *) &name, sizeof(struct sockaddr *));
+    bzero((char *) &name, sizeof(name));
     if (af_def == AF_UNIX) {
       name.sock_un.sun_family = AF_UNIX;
       strcpy(name.sock_un.sun_path, ip);
@@ -1011,9 +1040,17 @@ static int sockread(char *s, int *len)
       else
 	fdtmp = socklist[i].sock;
 
-      if (fdtmp > fds)
-        fds = fdtmp;
-      FD_SET(fdtmp, &fd);
+      if (fd_in_range(fdtmp)) {
+        if (fdtmp > fds)
+          fds = fdtmp;
+        FD_SET(fdtmp, &fd);
+      } else {
+        static bool warned = 0;
+        if (!warned) {
+          putlog(LOG_MISC, "*", "Socket fd %d is >= FD_SETSIZE (%d); not selectable", fdtmp, FD_SETSIZE);
+          warned = 1;
+        }
+      }
     }
   }
 
@@ -1024,11 +1061,11 @@ static int sockread(char *s, int *len)
   if (x > 0) {
     /* Something happened */
     for (i = 0; i < MAXSOCKS; i++) {
-      if ((!(socklist[i].flags & SOCK_UNUSED)) && ((FD_ISSET(socklist[i].sock, &fd)) ||
+      if ((!(socklist[i].flags & SOCK_UNUSED)) && ((fd_in_range(socklist[i].sock) && FD_ISSET(socklist[i].sock, &fd)) ||
 #ifdef EGG_SSL_EXT
             ((socklist[i].ssl) && (SSL_pending(socklist[i].ssl))) ||
 #endif
-	  ((socklist[i].sock == STDOUT) && (!backgrd) && (FD_ISSET(STDIN, &fd))))) {
+	  ((socklist[i].sock == STDOUT) && (!backgrd) && fd_in_range(STDIN) && (FD_ISSET(STDIN, &fd))))) {
 	if (socklist[i].flags & (SOCK_LISTEN | SOCK_CONNECT)) {
 	  /* Listening socket -- don't read, just return activity */
 	  /* Same for connection attempt */
@@ -1455,6 +1492,8 @@ void dequeue_sockets()
   tv.tv_usec = 0; 		/* we only want to see if it's ready for writing, no need to actually wait.. */
   for (i = 0; i < MAXSOCKS; i++) { 
     if (!(socklist[i].flags & SOCK_UNUSED) && socklist[i].outbuf != NULL) {
+      if (!fd_in_range(socklist[i].sock))
+        continue;
       FD_SET(socklist[i].sock, &wfds);
       if (socklist[i].sock > fds)
         fds = socklist[i].sock;
@@ -1470,7 +1509,7 @@ void dequeue_sockets()
 
   for (i = 0; i < MAXSOCKS; i++) { 
     if (!(socklist[i].flags & SOCK_UNUSED) &&
-	(socklist[i].outbuf != NULL) && (FD_ISSET(socklist[i].sock, &wfds))) {
+	(socklist[i].outbuf != NULL) && fd_in_range(socklist[i].sock) && (FD_ISSET(socklist[i].sock, &wfds))) {
       /* Trick tputs into doing the work */
       errno = 0;
 #ifdef EGG_SSL_EXT
@@ -1612,9 +1651,14 @@ bool socket_run() {
   } else
     --socket_cleanup;
 
-  int xx = sockgets(buf, &i);
+  int xx = -1;
+  int drain = 0;
 
-  if (xx >= 0) {		/* Non-error */
+  /* Drain loop: process up to 20 buffered lines per call to handle IRC bursts */
+  do {
+    xx = sockgets(buf, &i);
+
+    if (xx >= 0) {		/* Non-error */
     if ((idx = findanyidx(xx)) != -1) {
       if (likely(dcc[idx].type->activity)) {
         /* Traffic stats */
@@ -1637,6 +1681,7 @@ bool socket_run() {
             traffic.in_today.unknown += i + 1;
         }
         dcc[idx].type->activity(idx, buf, (size_t) i);
+        OPENSSL_cleanse(buf, sizeof(buf));
       } else
         putlog(LOG_MISC, "*",
             STR("!!! untrapped dcc activity: type %s, sock %d"),
@@ -1677,6 +1722,10 @@ bool socket_run() {
     socket_cleanup = 0;	/* If we've been idle, cleanup & flush */
     return 1;
   }
+
+  /* Continue drain loop if we got data and haven't hit the limit */
+  } while (xx >= 0 && ++drain < 20);
+
   return 0;
 }
 /* vim: set sts=2 sw=2 ts=8 et: */

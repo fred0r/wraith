@@ -45,6 +45,8 @@
 #include "core_binds.h"
 #include <stdarg.h>
 
+#include <openssl/crypto.h>
+
 static char	OBUF[SGRAB - 110] = "";
 
 void send_uplink(const char *msg, size_t len)
@@ -117,6 +119,7 @@ void botnet_send_cmd_broad(int idx, const char *fbot,
   if (tands > 0) {
     size_t len = simple_snprintf(OBUF, sizeof OBUF, "rc * %s %s %i %s\n", fbot, fhnd, fromidx, cmd);
     send_tand_but(idx, OBUF, len);
+    OPENSSL_cleanse(OBUF, sizeof(OBUF));
   }
   if (idx < 0) {
     char tmp[24] = "";
@@ -363,6 +366,17 @@ void botnet_send_zapf_broad(int idx, const char *a, const char *b, const char *c
 
 void botnet_send_var(int idx, variable_t *var) {
   const size_t len = simple_snprintf(OBUF, sizeof(OBUF), "va %s %s\n", var->name, var->gdata ? var->gdata : "");
+
+  tputs(dcc[idx].sock, OBUF, len);
+}
+
+/* Send an explicit value for a variable to a single bot (unicast 'va').
+ * The peer applies it locally and does not re-share it. */
+void botnet_send_var_value(int idx, const char *name, const char *value) {
+  if (idx < 0 || idx >= dcc_total || !dcc[idx].type || dcc[idx].type != &DCC_BOT)
+    return;
+
+  const size_t len = simple_snprintf(OBUF, sizeof(OBUF), "va %s %s\n", name, value ? value : "");
 
   tputs(dcc[idx].sock, OBUF, len);
 }

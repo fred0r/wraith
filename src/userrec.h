@@ -7,6 +7,8 @@ namespace bd {
 
 struct userrec *adduser(struct userrec *, const char *, const char *, const char *, flag_t, int);
 void addhost_by_handle(char *, char *);
+void seed_host_equivalents(const char *handle, const char *mask);
+void heal_link_hosts();
 void clear_masks(struct maskrec *);
 void clear_cached_users();
 void cache_users();
@@ -17,7 +19,7 @@ int count_users(const struct userrec *) __attribute__((pure));
 int deluser(char *);
 int change_handle(struct userrec *, char *);
 void correct_handle(char *);
-void stream_writeuserfile(bd::Stream&, const struct userrec *, bool = 0);
+void stream_writeuserfile(bd::Stream&, const struct userrec *, bool = 0, int peer_numver = -1);
 int real_write_userfile(int);
 int write_userfile(int);
 void touch_laston(struct userrec *, const char *, time_t);

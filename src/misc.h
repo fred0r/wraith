@@ -60,6 +60,10 @@ int skipline(char *, int *);
 extern int		server_lag;
 extern bool		use_invites, use_exempts;
 
+const char *tz_format(int offset);
+int tz_parse(const char *str);
+#define TZ_ERR (-999999)
+
 #endif /* !_MISC_H_ */
 
 

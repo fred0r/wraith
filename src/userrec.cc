@@ -41,6 +41,7 @@
 #include "src/mod/irc.mod/irc.h"
 #include "main.h"
 #include "users.h"
+#include "userent.h"
 #include "chan.h"
 #include "match.h"
 #include "dccutil.h"
@@ -49,6 +50,7 @@
 #include "crypt.h"
 #include "core_binds.h"
 #include "socket.h"
+#include "adns.h"
 #include "net.h"
 #include "EncryptedStream.h"
 #include <bdlib/src/AtomicFile.h>
@@ -170,7 +172,7 @@ void clear_masks(maskrec *m)
       free(m->user);
     if (m->desc)
       free(m->desc);
-    free(m);
+    delete static_cast<MaskList *>(m);
   }
 }
 
@@ -539,14 +541,14 @@ static void sort_userlist()
   }
 }
 
-void stream_writeuserfile(bd::Stream& stream, const struct userrec *bu, bool old) {
+void stream_writeuserfile(bd::Stream& stream, const struct userrec *bu, bool old, int peer_numver) {
   time_t tt = now;
   char s1[81] = "";
 
   strcpy(s1, ctime(&tt));
 
   stream << bd::String::printf("#4v: %s -- %s -- written %s", ver, conf.bot->nick, s1);
-  channels_writeuserfile(stream, old);
+  channels_writeuserfile(stream, old, peer_numver);
 
   for (const struct userrec *u = bu; u; u = u->next)
     write_user(u, stream, -1);
@@ -582,6 +584,7 @@ int real_write_userfile(int idx)
 
   const char salt1[] = SALT1;
   EncryptedStream stream(salt1);
+  userfile_write_context(true);
   stream_writeuserfile(stream, userlist);
   if (stream.writeFile(new_userfile->fd())) {
     putlog(LOG_MISC, "*", "ERROR writing user file. (%s)", strerror(errno));
@@ -840,6 +843,145 @@ void addhost_by_handle(char *handle, char *host)
       shareout("+h %s %s\n", handle, host);
   }
   clear_chanlist();
+}
+
+/* Add the equivalent representation of a bot link hostmask
+ * ("-telnet!<ident>@<host>"): resolve an FQDN to its IP (or an IP to its
+ * FQDN) and add the counterpart mask if not already present. Only ever adds
+ * the other form of the same endpoint. IPv4 only for now. */
+struct seed_host_ctx {
+  char handle[HANDLEN + 1];
+  char ident[64];
+};
+
+static void
+seed_host_equivalents_cb(int id, void *client_data, const char *query,
+    const bd::Array<bd::String>& answers)
+{
+  struct seed_host_ctx *ctx = (struct seed_host_ctx *) client_data;
+
+  if (!ctx)
+    return;
+
+  if (answers.length()) {
+    char mask[UHOSTLEN + 40] = "";
+    struct userrec *u = get_user_by_handle(userlist, ctx->handle);
+
+    simple_snprintf(mask, sizeof(mask), "-telnet!%s@%s", ctx->ident, answers[0].c_str());
+
+    if (u && !user_has_host(NULL, u, mask) && !host_conflicts(mask))
+      addhost_by_handle(ctx->handle, mask);
+  }
+
+  free(ctx);
+}
+
+void
+seed_host_equivalents(const char *handle, const char *mask)
+{
+  if (!handle || !mask || strncasecmp(mask, "-telnet!", 8))
+    return;
+
+  const char *at = strchr(mask, '@');
+  const char *host = NULL;
+  size_t ilen = 0;
+
+  if (!at)
+    return;
+  host = at + 1;
+  if (!host[0])
+    return;
+
+  ilen = (size_t)(at - (mask + 8));
+  if (ilen == 0 || ilen >= 64)
+    return;
+
+  struct seed_host_ctx *ctx = (struct seed_host_ctx *) calloc(1, sizeof(*ctx));
+  if (!ctx)
+    return;
+
+  strlcpy(ctx->handle, handle, sizeof(ctx->handle));
+  memcpy(ctx->ident, mask + 8, ilen);
+  ctx->ident[ilen] = 0;
+
+  int rc = 0;
+
+  if (is_dotted_ip(host))
+    rc = egg_dns_reverse(host, 20, seed_host_equivalents_cb, ctx);
+  else
+    rc = egg_dns_lookup(host, 20, seed_host_equivalents_cb, ctx, DNS_LOOKUP_A);
+
+  /* -2 means a query for this host is already in flight and our callback
+   * will not be called; -1 means it was answered synchronously (callback
+   * already ran and freed ctx). */
+  if (rc == -2)
+    free(ctx);
+}
+
+/* One-shot startup repair: for bot records that only have FQDN-form
+ * "-telnet!" link masks (no IP form), resolve and add the IP form so links
+ * survive reverse-DNS failures. Bots with any IP form are left alone. */
+void
+heal_link_hosts()
+{
+  bd::Array<bd::String> todo;
+
+  for (struct userrec *u = userlist; u; u = u->next) {
+    struct list_type *q = NULL;
+    bool has_ip = 0;
+
+    if (!u->bot)
+      continue;
+
+    for (q = (struct list_type *) get_user(&USERENTRY_HOSTS, u); q; q = q->next) {
+      const char *h = (const char *) q->extra;
+      const char *at = NULL;
+
+      if (!h || strncasecmp(h, "-telnet!", 8))
+        continue;
+      at = strchr(h, '@');
+      if (at && at[1] && is_dotted_ip(at + 1)) {
+        has_ip = 1;
+        break;
+      }
+    }
+
+    if (has_ip)
+      continue;
+
+    for (q = (struct list_type *) get_user(&USERENTRY_HOSTS, u); q; q = q->next) {
+      const char *h = (const char *) q->extra;
+      const char *at = NULL;
+
+      if (!h || strncasecmp(h, "-telnet!", 8))
+        continue;
+      at = strchr(h, '@');
+      if (!at || !at[1] || is_dotted_ip(at + 1))
+        continue;
+      todo << bd::String::printf("%s\t%s", u->handle, h);
+    }
+  }
+
+  /* Resolve after the scan; a cached DNS answer can invoke the callback
+   * synchronously, so don't mutate the host list while iterating it. */
+  for (size_t i = 0; i < todo.length(); ++i) {
+    bd::String str = todo[i];
+    const char *entry = str.c_str();
+    const char *tab = entry ? strchr(entry, '\t') : NULL;
+    char handle[HANDLEN + 1] = "";
+    char mask[UHOSTLEN + 40] = "";
+    size_t hlen = 0;
+
+    if (!tab)
+      continue;
+    hlen = (size_t)(tab - entry);
+    if (hlen == 0 || hlen >= sizeof(handle))
+      continue;
+    memcpy(handle, entry, hlen);
+    handle[hlen] = 0;
+    strlcpy(mask, tab + 1, sizeof(mask));
+    seed_host_equivalents(handle, mask);
+  }
 }
 
 void touch_laston(struct userrec *u, const char *where, time_t timeval)

@@ -98,8 +98,8 @@ colorbuf(char *buf, size_t len, int idx, size_t bufsiz)
   int cidx = coloridx(idx);
   int schar = 0;
   char buf3[1024] = "", buf2[15] = "", c = 0;
-  static int8_t stdout_cflags = 0;
-  int8_t *cflags;
+  static int stdout_cflags = 0;
+  int *cflags;
 
   if (idx == -1) {
     cflags = &stdout_cflags;
@@ -558,7 +558,7 @@ dcc_write(bd::Stream &stream, int idx)
   if (dcc[idx].sock > 0) {
     bd::String buf;
 
-    stream << bd::String::printf(STR("-dcc\n"));
+    stream << bd::String::printf("%s", STR("-dcc\n"));
     if (dcc[idx].type)
       stream << bd::String::printf(STR("type %s\n"), dcc[idx].type->name);
 //  if (user)
@@ -575,7 +575,7 @@ dcc_write(bd::Stream &stream, int idx)
       stream << bd::String::printf(STR("nick %s\n"), dcc[idx].nick);
     if (dcc[idx].host[0])
       stream << bd::String::printf(STR("host %s\n"), dcc[idx].host);
-    stream << bd::String::printf(STR("+dcc\n"));
+    stream << bd::String::printf("%s", STR("+dcc\n"));
   }
 }
 
@@ -1142,6 +1142,10 @@ int check_cmd_pass(const char *cmd, char *pass)
         /* Successful match on the old version, convert it and save it */
         char ctmp[256] = "";
         epass = salted_sha1(pass);
+        if (!epass) {
+          free(epass);
+          return 0;
+        }
 
         simple_snprintf(ctmp, sizeof(ctmp), "%s %s", cmd, epass);
         free(epass);

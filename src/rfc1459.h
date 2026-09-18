@@ -1,6 +1,35 @@
 #ifndef _RFC1459_H
 #define _RFC1459_H
 
+#include <cstddef>
+
+class CaseMapping {
+public:
+	virtual ~CaseMapping() = default;
+	virtual int casecmp(const char *s1, const char *s2) const = 0;
+	virtual int ncasecmp(const char *s1, const char *s2, size_t n) const = 0;
+	virtual bool char_equal(char c1, char c2) const = 0;
+};
+
+class Rfc1459Mapping : public CaseMapping {
+public:
+	int casecmp(const char *s1, const char *s2) const override;
+	int ncasecmp(const char *s1, const char *s2, size_t n) const override;
+	bool char_equal(char c1, char c2) const override;
+};
+
+class AsciiMapping : public CaseMapping {
+public:
+	int casecmp(const char *s1, const char *s2) const override;
+	int ncasecmp(const char *s1, const char *s2, size_t n) const override;
+	bool char_equal(char c1, char c2) const override;
+};
+
+extern Rfc1459Mapping rfc1459_mapping;
+extern AsciiMapping ascii_mapping;
+extern CaseMapping *active_case_mapping;
+
+/* C API wrappers for existing callers */
 int _rfc_casecmp(const char *, const char *) __attribute__((pure));
 int _rfc_ncasecmp(const char *, const char *, size_t) __attribute__((pure));
 
@@ -45,18 +74,7 @@ _rfc_toupper(const int c)
   return rfc_touppertab[(unsigned char) (c)];
 }
 
-static inline bool __attribute__((const))
-char_equal(const char c1, const char c2)
-{
-  return c1 == c2;
-}
-
-static inline bool __attribute__((const))
-_rfc_char_equal(const char c1, const char c2)
-{
-  return _rfc_toupper(c1) == _rfc_toupper(c2);
-}
-
+/* C API function pointer wrappers - delegate to active_case_mapping */
 extern bool (*rfc_char_equal) (const char, const char);
 extern int (*rfc_casecmp) (const char *, const char *);
 extern int (*rfc_ncasecmp) (const char *, const char *, size_t);

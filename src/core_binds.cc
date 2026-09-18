@@ -93,7 +93,7 @@ bool check_aliases(int idx, const char *cmd, const char *args)
       /* Sanity check - Aliases cannot reference other aliases */
       bool find = 0;
       table = bind_table_lookup("dcc");
-      for (entry = table->entries; entry && entry->next; entry = entry->next) {
+      for (entry = table->entries; entry; entry = entry->next) {
         if (!strncasecmp(p, entry->mask, strlen(p))) {
           find = 1;
           break;
@@ -182,13 +182,17 @@ int real_check_bind_dcc(const char *cmd, int idx, const char *text, Auth *auth)
   size_t cmdlen = strlen(cmd);
 
   int hits = 0;
+  bind_entry_t *matched = NULL;
 
-  for (entry = table->entries; entry && entry->next; entry = entry->next)
-    if (!strncasecmp(cmd, entry->mask, cmdlen))
+  for (entry = table->entries; entry; entry = entry->next)
+    if (!strncasecmp(cmd, entry->mask, cmdlen)) {
+      if (!hits)
+        matched = entry;
       ++hits;
+    }
  
   if (hits == 1) {
-    for (entry = table->entries; entry && entry->next; entry = entry->next) {
+    for (entry = table->entries; entry; entry = entry->next) {
       if (!strncasecmp(cmd, entry->mask, cmdlen)) {
         if (has_cmd_pass(entry->mask)) {
           if (flagrec_ok(&entry->user_flags, &fr)) {
@@ -228,8 +232,8 @@ int real_check_bind_dcc(const char *cmd, int idx, const char *text, Auth *auth)
     }
   }
 
-  if (entry && auth) {
-    if (!(entry->cflags & AUTH)) {
+  if (matched && auth) {
+    if (!(matched->cflags & AUTH)) {
       free(args);
       return 0;
     }

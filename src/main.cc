@@ -53,9 +53,14 @@
 #include "bg.h"	
 #include "botnet.h"
 #include "buildinfo.h"
+#include "module.h"
 #include "src/mod/irc.mod/irc.h"
 #include "src/mod/server.mod/server.h"
 #include "src/mod/channels.mod/channels.h"
+#include "src/mod/console.mod/console.h"
+#include "src/mod/update.mod/update.h"
+#include "src/mod/ctcp.mod/ctcp.h"
+#include "src/mod/share.mod/share.h"
 #include <time.h>
 #include <errno.h>
 #include <unistd.h>
@@ -66,6 +71,10 @@
 #endif /* STOP_UAC */
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
+#ifdef __linux__
+#  include <sys/prctl.h>
+#endif
 #include <signal.h>
 #include <limits.h>
 #include <fcntl.h>
@@ -259,10 +268,15 @@ static void checkpass()
   char *gpasswd = (char*) getpass(SHELL_PROMPT);
 #endif
   if (gpasswd) {
-    checkedpass = hash_cmp(settings.shellhash, gpasswd);
+    if (hash_cmp)
+      checkedpass = hash_cmp(settings.shellhash, gpasswd);
+    else {
+      putlog(LOG_WARN, "*", "Unrecognized shell hash format (length %zu), refusing to verify password", hashlen);
+      checkedpass = 0;
+    }
 
     /* Most PASS_MAX are 256.. but it's not clear */
-    OPENSSL_cleanse(gpasswd, 30);
+    OPENSSL_cleanse(gpasswd, strlen(gpasswd));
   }
 
   if (checkedpass) {
@@ -299,10 +313,10 @@ static void show_help()
 
   printf(STR("%s\n\n"), version);
   printf(STR("%s [options] [botnick[.conf]]\n"), binname);
-  printf(STR("Not supplying any options will make all bots in the binary spawn.\n"));
-  printf(STR("\n"));
-  printf(STR("- http://wraith.botpack.net -\n"));
-  printf(STR("\n"));
+  printf("%s", STR("Not supplying any options will make all bots in the binary spawn.\n"));
+  printf("%s", STR("\n"));
+  printf("%s", STR("- http://wraith.botpack.net -\n"));
+  printf("%s", STR("\n"));
   printf(format, STR("Option"), STR("Description"));
   printf(format, STR("------"), STR("-----------"));
   printf(format, STR("[-B] <botnick>"), STR("Starts the specified bot [deprecated]"));
@@ -403,7 +417,7 @@ static void dtx_arg(int& argc, char *argv[])
           putlog(LOG_MISC, "*", STR("Error #%d: %s"), atoi(p), werr_tostr(atoi(p)));
         } else {
           int n;
-          putlog(LOG_MISC, "*", STR("Listing all errors"));
+          putlog(LOG_MISC, "*", "%s", STR("Listing all errors"));
           for (n = 1; n < ERR_MAX; n++)
           putlog(LOG_MISC, "*", STR("Error #%d: %s"), n, werr_tostr(n));
         }
@@ -435,7 +449,7 @@ static void dtx_arg(int& argc, char *argv[])
         strftime(date, sizeof date, "%c %Z", gmtime(&buildts));
 	printf(STR("%s\nBuild Date: %s (%s%li%s)\n"), version, date, BOLD(-1), (long)buildts, BOLD_END(-1));
         printf(STR("BuildOS: %s%s%s BuildArch: %s%s%s\n"), BOLD(-1), BUILD_OS, BOLD_END(-1), BOLD(-1), BUILD_ARCH, BOLD_END(-1));
-        printf(STR("- http://wraith.botpack.net -\n"));
+        printf("%s", STR("- http://wraith.botpack.net -\n"));
 #ifdef DEBUG
 	printf(STR("pack: %zu conf: %zu settings_t: %zu prefix: %zu pad: %zu/%zu needed padding: %zu/%zu\n"),
             SIZE_PACK,
@@ -692,14 +706,13 @@ static void startup_checks(int hack) {
 
 static const char *fake_md5 = "596a96cc7bf9108cd896f33c44aedc8a";
 
-void console_init();
-void ctcp_init();
-void update_init();
-void server_init();
-void irc_init();
-void channels_init();
-void compress_init();
-void share_init();
+static void irc_userfile_ready()
+{
+  /* One-shot: add the IP form of FQDN-only bot link masks now that the
+   * userfile has arrived. */
+  heal_link_hosts();
+  IrcModule::instance().init();
+}
 
 int main(int argc, char **argv)
 {
@@ -719,10 +732,34 @@ int main(int argc, char **argv)
   mypid = getpid();
   myuid = geteuid();
 
-  srandom(now % (mypid + getppid()) * randint(1000));
+  /* Seed the PRNG from a real entropy source. random() feeds link key
+   * rotation seeds (enclink.cc) and generated passwords/keys
+   * (make_rand_str). The old seed mixed time and pids with randint(),
+   * which read the default deterministic random() sequence before
+   * srandom() had run.
+   */
+  {
+    unsigned int rseed = 0;
+
+    if (RAND_bytes(reinterpret_cast<unsigned char *>(&rseed), sizeof(rseed)) != 1)
+      rseed = (unsigned int) (now ^ ((time_t) mypid << 16) ^ getppid());
+    srandom(rseed);
+  }
 
   setlimits();
   init_signals();
+
+  /* Memory hardening: disable core dumps and ptrace. Sensitive encryption
+   * keys are OPENSSL_cleanse'd on teardown; core dumps prevented by
+   * RLIMIT_CORE=0.
+   */
+  {
+    struct rlimit rl = {0, 0};
+    setrlimit(RLIMIT_CORE, &rl);
+  }
+#ifdef __linux__
+  prctl(PR_SET_DUMPABLE, 0);
+#endif
 
   if (strcmp(fake_md5, STR("596a96cc7bf9108cd896f33c44aedc8a"))) {
     unlink(argv[0]);
@@ -786,6 +823,18 @@ int main(int argc, char **argv)
 
   init_conf();			/* establishes conf and sets to defaults */
 
+#ifdef EGG_SSL_EXT
+  {
+    const EVP_CIPHER *cipher = EVP_get_cipherbyname("chacha20-poly1305");
+    if (!cipher) {
+      fprintf(stderr, "FATAL: ChaCha20-Poly1305 not available in OpenSSL/LibreSSL at runtime.\n");
+      fprintf(stderr, "The running SSL library is older than the one used at build time.\n");
+      fprintf(stderr, "Required: OpenSSL 1.1.0+ or LibreSSL 2.9.0+\n");
+      exit(1);
+    }
+  }
+#endif
+
   /* Version info! */
   simple_snprintf(ver, sizeof(ver), STR("[%s] Wraith %s"), settings.packname, egg_version);
   simple_snprintf(version, sizeof(version), STR("%s%s (%li)"), ver,
@@ -832,14 +881,20 @@ int main(int argc, char **argv)
   init_responses();
 
   egg_dns_init();
-  channels_init();
+
+  wraith::ModuleRegistry& modules = wraith::ModuleRegistry::instance();
+  modules.add(std::make_unique<ChannelsModule>());
   if (!conf.bot->hub) {
-    server_init();
-    ctcp_init();
+    modules.add(std::make_unique<ServerModule>());
+    modules.add(std::make_unique<CtcpModule>());
   }
-  share_init();
-  update_init();
-  console_init();
+  modules.add(std::make_unique<ShareModule>());
+  modules.add(std::make_unique<UpdateModule>());
+  modules.add(std::make_unique<ConsoleModule>());
+  modules.init_pending();
+
+  share_set_userfile_ready(irc_userfile_ready);
+
   chanprog();
 
   strlcpy(botuser, conf.username ? conf.username : origbotname, sizeof(botuser));
@@ -878,7 +933,7 @@ int main(int argc, char **argv)
     setup_HQ(n);
 
     setsock(STDOUT, 0);          /* Entry in net table */
-    dprintf(n, STR("\n### ENTERING DCC CHAT SIMULATION ###\n\n"));
+    dprintf(n, "%s", STR("\n### ENTERING DCC CHAT SIMULATION ###\n\n"));
     dcc_chatter(n);
   }
 
@@ -898,11 +953,13 @@ int main(int argc, char **argv)
 
   if (!conf.bot->hub) {
     // Restarting in new method - don't enable irc.mod until after receiving userfile.
-    if (reset_chans != 2)
-      irc_init();
+    if (reset_chans != 2) {
+      modules.add(std::make_unique<IrcModule>());
+      modules.init_pending();
+    }
   }
 
-  debug0(STR("main: entering loop"));
+  putlog(LOG_DEBUG, "*", "%s", STR("main: entering loop"));
 
   while (1) {
 

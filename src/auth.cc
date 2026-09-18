@@ -68,12 +68,14 @@ Auth::~Auth()
 void Auth::MakeHash() noexcept
 {
  make_rand_str(rand, 50);
- makehash(user, rand, hash, 50);
+ makehash(user, rand, hash, sizeof(hash));
+ makehash_md5(user, rand, hash_md5, sizeof(hash_md5));
 }
 
 void Auth::Done() noexcept
 {
   hash[0] = 0;
+  hash_md5[0] = 0;
   rand[0] = 0;
   Status(AUTHED);
 }
@@ -268,18 +270,30 @@ void Auth::TellAuthed(int idx) noexcept
 
 void makehash(struct userrec *u, const char *randstring, char *out, size_t out_size)
 {
-  char hash[256] = "", *secpass = NULL;
+  char buf[256] = "";
+  std::string secpass;
 
-  if (u && get_user(&USERENTRY_SECPASS, u)) {
-    secpass = strdup((char *) get_user(&USERENTRY_SECPASS, u));
-    secpass[strlen(secpass)] = 0;
-  }
-  simple_snprintf(hash, sizeof hash, "%s%s%s", randstring, (secpass && secpass[0]) ? secpass : "", auth_key);
-  if (secpass)
-    free(secpass);
+  if (u && get_user(&USERENTRY_SECPASS, u))
+    secpass = (char *) get_user(&USERENTRY_SECPASS, u);
+  simple_snprintf(buf, sizeof buf, "%s%s%s", randstring, secpass.c_str(), auth_key);
 
-  strlcpy(out, MD5(hash), out_size);
-  OPENSSL_cleanse(hash, sizeof(hash));
+  strlcpy(out, SHA256(buf), out_size);
+  SHA256(NULL);
+  OPENSSL_cleanse(buf, sizeof(buf));
+}
+
+void makehash_md5(struct userrec *u, const char *randstring, char *out, size_t out_size)
+{
+  char buf[256] = "";
+  std::string secpass;
+
+  if (u && get_user(&USERENTRY_SECPASS, u))
+    secpass = (char *) get_user(&USERENTRY_SECPASS, u);
+  simple_snprintf(buf, sizeof buf, "%s%s%s", randstring, secpass.c_str(), auth_key);
+
+  strlcpy(out, MD5(buf), out_size);
+  MD5(NULL);
+  OPENSSL_cleanse(buf, sizeof(buf));
 }
 
 int check_auth_dcc(Auth *auth, const char *cmd, const char *par)

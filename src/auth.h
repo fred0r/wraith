@@ -47,7 +47,8 @@ class Auth {
   time_t authtime;              /* what time they authed at */
   time_t atime;                 /* when they last were active */
   int idx;			/* do they have an associated idx? */
-  char hash[MD5_HASH_LENGTH + 1];       /* used for dcc authing */
+  char hash[SHA256_HASH_LENGTH + 1];        /* SHA256 auth hash (64 hex + null) */
+  char hash_md5[MD5_HASH_LENGTH + 1];       /* MD5 auth hash for backward compat */
   char rand[51];
   RfcString nick;
   char host[UHOSTLEN];
@@ -60,6 +61,7 @@ class Auth {
 };
 
 void makehash(struct userrec *u, const char *randstring, char *out, size_t out_size);
+void makehash_md5(struct userrec *u, const char *randstring, char *out, size_t out_size);
 
 int check_auth_dcc(Auth *, const char *, const char *);
 

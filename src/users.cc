@@ -244,7 +244,7 @@ static void addmask_fully(struct chanset_t *chan, maskrec **m, maskrec **global,
 			 char *note, time_t expire_time, int flags,
 			 time_t added, time_t last)
 {
-  maskrec *p = (maskrec *) calloc(1, sizeof(maskrec));
+  maskrec *p = new MaskList();
   maskrec **u = (chan) ? m : global;
 
   p->next = *u;
@@ -568,7 +568,7 @@ void backup_userfile()
  * *ignore global ignores
  * ::#chan channel bans
  * - entries in each
- * + denotes tcl command
+ * + denotes command
  * <handle> begin user entry
  * --KEY INFO - info on each
  * NEWER:

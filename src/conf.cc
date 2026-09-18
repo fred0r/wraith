@@ -53,7 +53,7 @@ tellconf()
   sdprintf(STR("portmin: %d\n"), conf.portmin);
   sdprintf(STR("portmax: %d\n"), conf.portmax);
   sdprintf(STR("autocron: %d\n"), conf.autocron);
-  sdprintf(STR("bots:\n"));
+  sdprintf("%s", STR("bots:\n"));
   for (bot = conf.bots; bot && bot->nick; bot = bot->next) {
     i++;
     sdprintf(STR("%d: %s%s IP: %s HOST: %s IP6: %s HOST6: %s v6: %d HUB: %d PID: %d\n"), i,
@@ -66,7 +66,7 @@ tellconf()
              (int)bot->pid);
   }
   if (conf.bot && ((bot = conf.bot))) {
-    sdprintf(STR("me:\n"));
+    sdprintf("%s", STR("me:\n"));
     sdprintf(STR("%s%s IP: %s HOST: %s IP6: %s HOST6: %s v6: %d HUB: %d PID: %d\n"),
              bot->disabled ? "/" : "",
              bot->nick,
@@ -282,7 +282,7 @@ confedit()
     timespecsub(&ts1, &ts2, &ts2);
 #endif
     if (timespecisset(&ts2)) {
-      printf(STR("* Config unchanged.\n"));
+      printf("%s", STR("* Config unchanged.\n"));
       tmpconf.my_close();
       unlink(tmpconf.file);
       exit(0);            
@@ -954,7 +954,7 @@ fill_conf_bot(bool fatal)
 
   if (me) {
     if (!me->hub && me->localhub)
-      sdprintf(STR("I am localhub!"));
+      sdprintf("%s", STR("I am localhub!"));
 
     /* for future, we may just want to make this a pointer to ->bots if we do an emech style currentbot-> */
     conf.bot = (conf_bot *) calloc(1, sizeof(conf_bot));

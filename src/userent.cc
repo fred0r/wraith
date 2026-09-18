@@ -611,6 +611,8 @@ static bool pass_set(struct userrec *u, struct user_entry *e, void *buf)
   char *newpass = NULL;
   char *pass = (char *) buf;
 
+  if (pass && pass[0] && pass[0] != '-' && !u->bot && pass[0] != '+' && (strlen(pass) < 8 || strlen(pass) > 64))
+    return 0;
   free(e->u.extra);
   if (!pass || !pass[0] || (pass[0] == '-'))
     e->u.extra = NULL;
@@ -710,19 +712,83 @@ static void secpass_display(int idx, struct user_entry *e, struct userrec *u)
   }
 }
 
+/* --- SECPASS delivery scoping -------------------------------------------
+ * SECPASS stays plaintext in RAM, on the botnet (link-encrypted) and in `.u`;
+ * it is only delivered to hubs and +c (BOT_CHANHUB) bots - the peers that can
+ * answer a login challenge. The write context records whether the current
+ * userfile stream targets such a peer. */
+static bool uf_peer_allowed = true;
+
+void userfile_write_context(bool peer_allowed)
+{
+  uf_peer_allowed = peer_allowed;
+}
+
+bool userfile_peer_allowed(void)
+{
+  return uf_peer_allowed;
+}
+
+bool secpass_set(struct userrec *u, struct user_entry *e, void *buf)
+{
+  char *string = (char *) buf;
+
+  if (string && !string[0])
+    string = NULL;
+  if (!string && !e->u.string)
+    return 1;
+
+  if (string) {
+    size_t l = strlen(string);
+    char *i = NULL;
+
+    if (l > 160)
+      l = 160;
+
+    e->u.string = (char *) realloc(e->u.string, l + 1);
+    strlcpy(e->u.string, string, l + 1);
+
+    for (i = e->u.string; *i; i++)
+      if ((unsigned int) *i < 32 && !strchr("\002\003\026\037", *i))
+        *i = '?';
+  } else {
+    free(e->u.string);
+    e->u.string = NULL;
+  }
+
+  if (!noshare)
+    shareout_secpass(u, -1, "c %s %s %s\n", e->type->name, u->handle, e->u.string ? e->u.string : "");
+
+  return 1;
+}
+
+void secpass_write_userfile(bd::Stream& stream, const struct userrec *u, const struct user_entry *e, int idx)
+{
+  if (!e->u.string || !uf_peer_allowed)
+    return;
+
+  stream << bd::String::printf("--%s %s\n", e->type->name, e->u.string);
+}
+
+bool secpass_gotshare(struct userrec *u, struct user_entry *e, char *data, int idx)
+{
+  if (conf.bot->hub)
+    putlog(LOG_DEBUG, "@", "%s: change %s %s", dcc[idx].nick, e->type->name, u->handle);
+  return secpass_set(u, e, data);
+}
+
 struct user_entry_type USERENTRY_SECPASS =
 {
   0,
-  def_gotshare,
+  secpass_gotshare,
   def_unpack,
-  def_write_userfile,
+  secpass_write_userfile,
   def_kill,
   def_get,
-  def_set,
+  secpass_set,
   secpass_display,
   "SECPASS"
 };
-
 static bool laston_unpack(struct userrec *u, struct user_entry *e)
 {
   char *par = e->u.list->extra, *arg = newsplit(&par);

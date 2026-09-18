@@ -29,6 +29,7 @@
 
 #include "common.h"
 #include "dcc.h"
+#include "dcc_handler.h"
 #include "settings.h"
 #include "enclink.h"
 #include "binds.h"
@@ -48,6 +49,7 @@
 #include "crypt.h"
 #include "chanprog.h"
 #include "botmsg.h"
+#include "src/mod/server.mod/server.h"
 #include "botcmd.h"
 #include "botnet.h"
 #include "socket.h"
@@ -242,7 +244,7 @@ greet_new_bot(int idx)
     dcc[idx].status |= STAT_LEAF;
   dcc[idx].status |= STAT_LINKING;
 
-  dprintf(idx, "v 1001500 9 Wraith %s %d %d %li %s %s\n", egg_version,
+  dprintf(idx, "v 1005000 9 Wraith %s %d %d %li %s %s\n", egg_version,
       conf.bot->u->fflags, conf.bot->localhub, (long)buildts, commit,
       egg_version);
 
@@ -360,8 +362,9 @@ bot_version(int idx, char *par)
   touch_laston(dcc[idx].user, "linked", now);
   dcc[idx].type = &DCC_BOT;
   addbot(dcc[idx].nick, dcc[idx].nick, conf.bot->nick, '-', vlocalhub, vbuildts, vcommit, vversion, fflags);
-  simple_snprintf(x, sizeof x, "v 1001500");
+  simple_snprintf(x, sizeof x, "v 1005000");
   bot_share(idx, x);
+  send_ssl_to_child(idx);   /* give a new (mode-2-capable) peer the current ssl mode */
   dprintf(idx, "el\n");
 }
 
@@ -405,11 +408,7 @@ cont_link(int idx, char *buf, int ii)
   dcc[idx].type = &DCC_BOT_NEW;
   dcc[idx].u.bot->numver = 0;
 
-  if (ii == 3)
-    dprintf(idx, STR("-%s\n"), conf.bot->nick);
-    /* wait for "neg?" now */
-
-  /* now we wait to negotiate an encryption */
+  /* wait for the greeting line in dcc_bot_new to negotiate encryption */
   return;
 }
 
@@ -421,6 +420,14 @@ dcc_bot_new(int idx, char *buf, int x)
 
   strip_telnet(dcc[idx].sock, buf, &x);
   code = newsplit(&buf);
+
+  /* Detect the hub's " \n" greeting (empty after newsplit) and initiate encryption */
+  if (!dcc[idx].encrypt && !code[0]) {
+    dprintf(idx, STR("-%s\n"), conf.bot->nick);
+    dcc[idx].encrypt = 1;
+    return;
+  }
+
   if (!strcasecmp(code, "goodbye!")) {
     greet_new_bot(idx);
   } else if (!strcasecmp(code, "v")) {
@@ -620,14 +627,25 @@ display_dcc_identd(int idx, char *buf, size_t bufsiz)
   simple_snprintf(buf, bufsiz, "idtd  %d%s", dcc[idx].port, (dcc[idx].status & LSTN_PUBLIC) ? " pub" : "");
 }
 
+namespace {
+
+class IdentdHandler : public wraith::DccHandler {
+public:
+  void on_eof(int idx) override { eof_dcc_identd(idx); }
+  void on_activity(int idx, char *buf, int len) override { dcc_identd(idx, buf, len); }
+  void on_display(int idx, char *buf, size_t bufsiz) override { display_dcc_identd(idx, buf, bufsiz); }
+};
+
+} /* anonymous namespace */
+
 struct dcc_table DCC_IDENTD = {
   "IDENTD",
   DCT_LISTEN,
-  eof_dcc_identd,
-  dcc_identd,
+  &wraith::DccTableAdapter<IdentdHandler>::eof,
+  &wraith::DccTableAdapter<IdentdHandler>::activity,
   NULL,
   NULL,
-  display_dcc_identd,
+  &wraith::DccTableAdapter<IdentdHandler>::display,
   NULL,
   NULL,
   NULL
@@ -669,14 +687,25 @@ dcc_identd_connect(int idx, char *buf, int atr)
   dcc[j].timeval = now;
 }
 
+namespace {
+
+class IdentdConnectHandler : public wraith::DccHandler {
+public:
+  void on_eof(int idx) override { eof_dcc_identd(idx); }
+  void on_activity(int idx, char *buf, int len) override { dcc_identd_connect(idx, buf, len); }
+  void on_display(int idx, char *buf, size_t bufsiz) override { display_dcc_identd(idx, buf, bufsiz); }
+};
+
+} /* anonymous namespace */
+
 struct dcc_table DCC_IDENTD_CONNECT = {
   "IDENTD",
   DCT_LISTEN,
-  eof_dcc_identd,
-  dcc_identd_connect,
+  &wraith::DccTableAdapter<IdentdConnectHandler>::eof,
+  &wraith::DccTableAdapter<IdentdConnectHandler>::activity,
   NULL,
   NULL,
-  display_dcc_identd,
+  &wraith::DccTableAdapter<IdentdConnectHandler>::display,
   NULL,
   NULL,
   NULL
@@ -696,10 +725,12 @@ dcc_chat_secpass(int idx, char *buf, int atr)
   atr = dcc[idx].user ? dcc[idx].user->flags : 0;
 
   if (dccauth) {
-    char check[MD5_HASH_LENGTH + 7] = "";
+    char check[SHA256_HASH_LENGTH + 7] = "";
+    char check_md5[MD5_HASH_LENGTH + 7] = "";
 
     simple_snprintf(check, sizeof check, STR("+Auth %s"), dcc[idx].hash);
-    badauth = strcmp(check, buf);
+    simple_snprintf(check_md5, sizeof check_md5, STR("+Auth %s"), dcc[idx].hash_md5);
+    badauth = (strcmp(check, buf) && strcmp(check_md5, buf));
     /* +secpass */
   }
 
@@ -1009,6 +1040,11 @@ dcc_chat_pass(int idx, char *buf, int atr)
       }
 
       dcc[idx].encrypt = 2;
+      socklist[snum].encstatus = 1;
+      if (socklist[snum].enclink >= 0 &&
+          enclink[socklist[snum].enclink].type == LINK_GHOSTCASE3) {
+        putlog(LOG_BOTS, "*", "Hint: %s linked using AES-ECB (legacy). Update to v1.5.0+ for ChaCha20-Poly1305 encryption.", dcc[idx].nick);
+      }
       if (dcc[idx].bot) {
         dcc[idx].type = &DCC_BOT_NEW;
         dcc[idx].u.bot = (struct bot_info *) calloc(1, sizeof(struct bot_info));
@@ -1018,8 +1054,10 @@ dcc_chat_pass(int idx, char *buf, int atr)
           dcc[idx].status = STAT_CALLED;
         dprintf(idx, "goodbye!\n");
         greet_new_bot(idx);
-        if (conf.bot->hub || conf.bot->localhub)
+        if (conf.bot->hub || conf.bot->localhub) {
           send_timesync(idx);
+          send_timesync(-1);
+        }
       } else {
         // User encrypted over relay
         /* Turn off remote telnet echo (send IAC WILL ECHO). */
@@ -1033,9 +1071,15 @@ dcc_chat_pass(int idx, char *buf, int atr)
         char *hash = newsplit(&buf);
 
         int hash_n = strcmp(dcc[idx].shahash, hash);
+        bool sent_v2 = (dcc[idx].shahash_new[0] != 0);
+        int hash_n2 = sent_v2 ? strcmp(dcc[idx].shahash_new, hash) : 1;
+        putlog(LOG_DEBUG, "*", "neg hash check: sent_v2=%d hash='%.16s...' old_hash='%.16s...' new_hash='%.16s...' hash_n=%d hash_n2=%d",
+          sent_v2, hash, dcc[idx].shahash, dcc[idx].shahash_new, hash_n, hash_n2);
         OPENSSL_cleanse(dcc[idx].shahash, sizeof(dcc[idx].shahash));
+        OPENSSL_cleanse(dcc[idx].shahash_new, sizeof(dcc[idx].shahash_new));
         OPENSSL_cleanse(hash, strlen(hash));
-        if (hash_n) {
+        /* if hub sent v2, prefer new-format hash but accept old for backward compat */
+        if ((sent_v2 && hash_n2 && hash_n) || (!sent_v2 && hash_n)) {
           putlog(LOG_WARN, "*", STR("%s attempted to negotiate an encryption with an invalid hash."), dcc[idx].nick);
           killsock(dcc[idx].sock);
           lostdcc(idx);
@@ -1093,7 +1137,8 @@ dcc_chat_pass(int idx, char *buf, int atr)
       char randstr[51] = "";
 
       make_rand_str(randstr, 50);
-      makehash(dcc[idx].user, randstr, dcc[idx].hash, MD5_HASH_LENGTH + 1);
+      makehash(dcc[idx].user, randstr, dcc[idx].hash, sizeof(dcc[idx].hash));
+      makehash_md5(dcc[idx].user, randstr, dcc[idx].hash_md5, sizeof(dcc[idx].hash_md5));
 
       dcc[idx].type = &DCC_CHAT_SECPASS;
       dcc[idx].timeval = now;
@@ -1863,9 +1908,61 @@ dcc_telnet_id(int idx, char *buf, int atr)
       lostdcc(idx);
       return;
     }
+
+    /* Make future relinks independent of reverse DNS: seed the IP form
+     * (and the FQDN form when it differs). Only equivalent forms of the
+     * endpoint that just matched are added. */
+    if (u) {
+      if (!user_has_matching_host(nick, u, sip) && !host_conflicts(sip))
+        addhost_by_handle(nick, sip);
+      if (strcasecmp(shost, sip) && !user_has_matching_host(nick, u, shost) && !host_conflicts(shost))
+        addhost_by_handle(nick, shost);
+    }
   }
 
   dcc_telnet_pass(idx, atr);
+}
+
+/* Re-add the live -telnet! link hostmask(s) for a bot that is directly
+ * linked here (equivalent forms only). Used after .clearhosts so clearing
+ * does not revoke the trust of a bot that is currently connected; only the
+ * endpoint of the live connection is ever added. */
+void
+seed_live_link_hosts(const char *handle)
+{
+  if (!handle || !handle[0])
+    return;
+
+  for (int i = 0; i < dcc_total; i++) {
+    char shost[UHOSTLEN + 20] = "", sip[UHOSTLEN + 20] = "", user[30] = "";
+    struct userrec *u = NULL;
+    char *at = NULL;
+
+    if (!dcc[i].type || dcc[i].type != &DCC_BOT || (dcc[i].status & STAT_UNIXDOMAIN))
+      continue;
+    if (strcasecmp(dcc[i].nick, handle) &&
+        (!dcc[i].user || strcasecmp(dcc[i].user->handle, handle)))
+      continue;
+
+    at = strchr(dcc[i].host, '@');
+    if (!at)
+      return;
+
+    strlcpy(user, dcc[i].host, at - dcc[i].host + 1);
+    simple_snprintf(shost, sizeof(shost), "-telnet!%s", dcc[i].host);
+    simple_snprintf(sip, sizeof(sip), "-telnet!%s@%s", user, iptostr(htonl(dcc[i].addr)));
+
+    u = get_user_by_handle(userlist, handle);
+    if (!u)
+      return;
+
+    if (!user_has_matching_host(handle, u, sip) && !host_conflicts(sip))
+      addhost_by_handle((char *) handle, sip);
+    if (strcasecmp(shost, sip) && !user_has_matching_host(handle, u, shost) && !host_conflicts(shost))
+      addhost_by_handle((char *) handle, shost);
+
+    return;	/* one direct link is enough */
+  }
 }
 
 
@@ -1911,13 +2008,26 @@ dcc_telnet_pass(int idx, int atr)
   
       make_rand_str(rand, 50);
 
-      link_hash(idx, rand);
-
-      
+      /* Build cipher list */
       for (i = 0; enclink[i].name; i++) {
         if (enclink[i].type == LINK_CLEARTEXT && !link_cleartext) continue;
         simple_snprintf(&buf[strlen(buf)], sizeof(buf) - strlen(buf), "%d ", enclink[i].type);
       }
+
+      /* old-format hash (rand only, for backward compat) */
+      link_hash(idx, rand, NULL);
+
+      /* new-format hash (rand + ciphers + v2, downgrade-protected) */
+      {
+        char hash[1024] = "";
+        simple_snprintf(&buf[strlen(buf)], sizeof(buf) - strlen(buf), "v2 ");
+        simple_snprintf(hash, sizeof(hash), STR("enclink%s%s"), rand, buf);
+        strlcpy(dcc[idx].shahash_new, SHA1(hash), SHA_HASH_LENGTH + 1);
+        putlog(LOG_DEBUG, "*", "neg? hash: rand='%.16s...' buf='%s' sha='%.16s...'", rand, buf, dcc[idx].shahash_new);
+        SHA1(NULL);
+        OPENSSL_cleanse(hash, sizeof(hash));
+      }
+
       dprintf(-dcc[idx].sock, "neg? %s %s\n", rand, buf);
     } else {
       /* Turn off remote telnet echo (send IAC WILL ECHO). */
@@ -2024,14 +2134,25 @@ display_dcc_identwait(int idx, char *buf, size_t bufsiz)
   simple_snprintf(buf, bufsiz, "idtw  waited %ds", (int) (now - dcc[idx].timeval));
 }
 
+namespace {
+
+class IdentWaitHandler : public wraith::DccHandler {
+public:
+  void on_eof(int idx) override { eof_dcc_identwait(idx); }
+  void on_activity(int idx, char *buf, int len) override { dcc_identwait(idx, buf, len); }
+  void on_display(int idx, char *buf, size_t bufsiz) override { display_dcc_identwait(idx, buf, bufsiz); }
+};
+
+} /* anonymous namespace */
+
 struct dcc_table DCC_IDENTWAIT = {
   "IDENTWAIT",
   0,
-  eof_dcc_identwait,
-  dcc_identwait,
+  &wraith::DccTableAdapter<IdentWaitHandler>::eof,
+  &wraith::DccTableAdapter<IdentWaitHandler>::activity,
   NULL,
   NULL,
-  display_dcc_identwait,
+  &wraith::DccTableAdapter<IdentWaitHandler>::display,
   NULL,
   NULL,
   NULL
@@ -2123,7 +2244,8 @@ dcc_telnet_got_ident(int i, char *host)
   if (!unix_domain) {
     char shost[UHOSTLEN + 20] = "", sip[UHOSTLEN + 20] = "";
     char *p = strchr(host, '@');
-    *p = 0;
+    if (p)
+      *p = 0;
 
     simple_snprintf(shost, sizeof(shost), "-telnet!%s", dcc[i].host);
     simple_snprintf(sip, sizeof(sip), "-telnet!%s@%s", host, iptostr(htonl(dcc[i].addr)));

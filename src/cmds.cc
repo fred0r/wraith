@@ -57,7 +57,6 @@
 #include "socket.h"
 #include "traffic.h" /* egg_traffic_t */
 #include "core_binds.h"
-#include "libtcl.h"
 #include "src/mod/console.mod/console.h"
 #include "src/mod/server.mod/server.h"
 #include "src/mod/irc.mod/irc.h"
@@ -320,6 +319,10 @@ static void cmd_cmdpass(int idx, char *par)
   char *epass = NULL, tmp[256] = "";
 
   epass = salted_sha1(par[0] ? par : pass);
+  if (!epass) {
+    dprintf(idx, "Password too long (max 64 characters).\n");
+    return;
+  }
   simple_snprintf(tmp, sizeof tmp, "%s %s", cmd, epass);
   free(epass);
   if (has_pass)
@@ -392,56 +395,56 @@ static void cmd_about(int idx, char *par)
   char c[80] = "";
 
   putlog(LOG_CMDS, "*", "#%s# about", dcc[idx].nick);
-  dprintf(idx, STR("Wraith botpack by bryan\n"));
-  dprintf(idx, STR("http://wraith.botpack.net\n"));
+  dprintf(idx, "%s", STR("Wraith botpack by bryan\n"));
+  dprintf(idx, "%s", STR("http://wraith.botpack.net\n"));
   strftime(c, sizeof c, "%c %Z", gmtime(&buildts));
   dprintf(idx, "Version: %s\n", egg_version);
   dprintf(idx, "Build: %s (%li)\n", c, (long)buildts);
   dprintf(idx, "Commit: %s\n", commit);
-  dprintf(idx, STR("(written from a base of Eggdrop 1.6.12)\n"));
+  dprintf(idx, "%s", STR("(written from a base of Eggdrop 1.6.12)\n"));
   dprintf(idx, "..with credits and thanks to the following:\n");
   dprintf(idx, " \n");
-  dprintf(idx, STR(" * Eggdev for eggdrop obviously\n"));
-  dprintf(idx, STR(" * $blayzkat$b, my wife, for great love, support, ideas and motivation.\n"));
-  dprintf(idx, STR(" * $bryguy$b for beta testing, providing code, finding bugs, and providing input.\n"));
-  dprintf(idx, STR(" * $bSFC$b for providing compile shells, continuous input, feature suggestions, and testing.\n"));
-  dprintf(idx, STR(" * $bwarchest$b for his dedicated bug finding, testing, input, and original inspiration to code a botpack.\n"));
-  dprintf(idx, STR(" * $bcontext$b for finding bugs, code, ideas, git, being involved in development.\n"));
-  dprintf(idx, STR(" * $bxmage$b for beta testing.\n"));
-  dprintf(idx, STR(" * $bpasswd$b for beta testing, and his dedication to finding bugs.\n"));
-  dprintf(idx, STR(" * $bpgpkeys$b for finding bugs, and providing input.\n"));
-  dprintf(idx, STR(" * $bExcelsior$b for celdrop which inspired many features.\n"));
-  dprintf(idx, STR(" * $bsyt$b for giving me inspiration to code a more secure bot.\n"));
-  dprintf(idx, STR(" * $bmulder$b for helping with the cookie op algorithm.\n"));
-  dprintf(idx, STR(" * $bBlackjac$b for helping with the bx auth script with his Sentinel script.\n"));
-  dprintf(idx, STR(" * $bMystikal$b for various bugs.\n"));
-  dprintf(idx, STR(" * $bEstella$b for finding bugs, code, ideas, beta testing.\n"));
-  dprintf(idx, STR(" * $bDimmiez$b for great ideas.\n"));
-  dprintf(idx, STR(" * $bZero$b for a great stream of ideas, beta testing.\n"));
-  dprintf(idx, STR(" * $bMafaioz$b for good ideas, support on wraith.no, beta testing.\n"));
-  dprintf(idx, STR(" * $bTical$b for great ideas.\n"));
-  dprintf(idx, STR(" * $binsect$b for helping test the RBL code.\n"));
-  dprintf(idx, STR(" * $bPhillip$b for ideas / code.\n"));
-  dprintf(idx, STR(" * $bducch$b for ideas / findings bugs / code.\n"));
-  dprintf(idx, STR(" * $bvap0r$b for providing the best raps and beats (http://wepump.in/music)\n"));
-  dprintf(idx, STR(" * $bMany$b others.\n"));
+  dprintf(idx, "%s", STR(" * Eggdev for eggdrop obviously\n"));
+  dprintf(idx, "%s", STR(" * $blayzkat$b, my wife, for great love, support, ideas and motivation.\n"));
+  dprintf(idx, "%s", STR(" * $bryguy$b for beta testing, providing code, finding bugs, and providing input.\n"));
+  dprintf(idx, "%s", STR(" * $bSFC$b for providing compile shells, continuous input, feature suggestions, and testing.\n"));
+  dprintf(idx, "%s", STR(" * $bwarchest$b for his dedicated bug finding, testing, input, and original inspiration to code a botpack.\n"));
+  dprintf(idx, "%s", STR(" * $bcontext$b for finding bugs, code, ideas, git, being involved in development.\n"));
+  dprintf(idx, "%s", STR(" * $bxmage$b for beta testing.\n"));
+  dprintf(idx, "%s", STR(" * $bpasswd$b for beta testing, and his dedication to finding bugs.\n"));
+  dprintf(idx, "%s", STR(" * $bpgpkeys$b for finding bugs, and providing input.\n"));
+  dprintf(idx, "%s", STR(" * $bExcelsior$b for celdrop which inspired many features.\n"));
+  dprintf(idx, "%s", STR(" * $bsyt$b for giving me inspiration to code a more secure bot.\n"));
+  dprintf(idx, "%s", STR(" * $bmulder$b for helping with the cookie op algorithm.\n"));
+  dprintf(idx, "%s", STR(" * $bBlackjac$b for helping with the bx auth script with his Sentinel script.\n"));
+  dprintf(idx, "%s", STR(" * $bMystikal$b for various bugs.\n"));
+  dprintf(idx, "%s", STR(" * $bEstella$b for finding bugs, code, ideas, beta testing.\n"));
+  dprintf(idx, "%s", STR(" * $bDimmiez$b for great ideas.\n"));
+  dprintf(idx, "%s", STR(" * $bZero$b for a great stream of ideas, beta testing.\n"));
+  dprintf(idx, "%s", STR(" * $bMafaioz$b for good ideas, support on wraith.no, beta testing.\n"));
+  dprintf(idx, "%s", STR(" * $bTical$b for great ideas.\n"));
+  dprintf(idx, "%s", STR(" * $binsect$b for helping test the RBL code.\n"));
+  dprintf(idx, "%s", STR(" * $bPhillip$b for ideas / code.\n"));
+  dprintf(idx, "%s", STR(" * $bducch$b for ideas / findings bugs / code.\n"));
+  dprintf(idx, "%s", STR(" * $bvap0r$b for providing the best raps and beats (http://wepump.in/music)\n"));
+  dprintf(idx, "%s", STR(" * $bMany$b others.\n"));
   dprintf(idx, " \n");
-  dprintf(idx, STR("For a list of Contributors see: git shortlog -sen master\n"));
-  dprintf(idx, STR("To Contribute see: https://github.com/wraith/wraith/wiki/Contributing\n"));
-  dprintf(idx, STR("Bugs can be reported at: https://github.com/wraith/wraith/issues\n"));
+  dprintf(idx, "%s", STR("For a list of Contributors see: git shortlog -sen master\n"));
+  dprintf(idx, "%s", STR("To Contribute see: https://github.com/wraith/wraith/wiki/Contributing\n"));
+  dprintf(idx, "%s", STR("Bugs can be reported at: https://github.com/wraith/wraith/issues\n"));
   dprintf(idx, " \n");
-  dprintf(idx, STR("Please support wraith by signing up for a shell at http://www.xzibition.com (coupon 'wraith' for 30%% off)\n"));
+  dprintf(idx, "%s", STR("Please support wraith by signing up for a shell at http://www.xzibition.com (coupon 'wraith' for 30%% off)\n"));
   dprintf(idx, " \n");
-  dprintf(idx, STR("The botpack ghost inspired the early versions of wraith and a few cmds.\n"));
-  dprintf(idx, STR("* $beinride$b\n"));
-  dprintf(idx, STR("* $bievil$b\n"));
+  dprintf(idx, "%s", STR("The botpack ghost inspired the early versions of wraith and a few cmds.\n"));
+  dprintf(idx, "%s", STR("* $beinride$b\n"));
+  dprintf(idx, "%s", STR("* $bievil$b\n"));
   dprintf(idx, "\n");
-  dprintf(idx, STR("The following botpacks gave inspiration, ideas, and some code:\n"));
-  dprintf(idx, STR(" * $uawptic$u by $blordoptic$b\n"));
-  dprintf(idx, STR(" * $uoptikz$u by $bryguy$b and $blordoptic$b\n"));
-  dprintf(idx, STR(" * $uceldrop$u by $bexcelsior$b\n"));
-  dprintf(idx, STR(" * $ugenocide$u by $bCrazi$b, $bDor$b, $bpsychoid$b, and $bAce24$b\n"));
-  dprintf(idx, STR(" * $utfbot$u by $bwarknite$b and $bloslinux$b\n"));
+  dprintf(idx, "%s", STR("The following botpacks gave inspiration, ideas, and some code:\n"));
+  dprintf(idx, "%s", STR(" * $uawptic$u by $blordoptic$b\n"));
+  dprintf(idx, "%s", STR(" * $uoptikz$u by $bryguy$b and $blordoptic$b\n"));
+  dprintf(idx, "%s", STR(" * $uceldrop$u by $bexcelsior$b\n"));
+  dprintf(idx, "%s", STR(" * $ugenocide$u by $bCrazi$b, $bDor$b, $bpsychoid$b, and $bAce24$b\n"));
+  dprintf(idx, "%s", STR(" * $utfbot$u by $bwarknite$b and $bloslinux$b\n"));
 }
 
 static void cmd_addline(int idx, char *par)
@@ -522,7 +525,11 @@ static void cmd_newpass(int idx, char *par)
     pass = strdup(newpass);
   }
 
-  set_user(&USERENTRY_PASS, dcc[idx].user, pass);
+  if (!set_user(&USERENTRY_PASS, dcc[idx].user, pass)) {
+    dprintf(idx, "Password must be between 8 and 64 characters.\n");
+    free(pass);
+    return;
+  }
   dprintf(idx, "Changed your password to: %s\n", pass);
   if (conf.bot->hub)
     write_userfile(idx);
@@ -1327,7 +1334,11 @@ static void cmd_chpass(int idx, char *par)
       pass = strdup(newpass);
     }
 
-    set_user(&USERENTRY_PASS, u, pass);
+    if (!set_user(&USERENTRY_PASS, u, pass)) {
+      dprintf(idx, "Password for '%s' must be between 8 and 64 characters.\n", handle);
+      free(pass);
+      return;
+    }
     putlog(LOG_CMDS, "*", "#%s# chpass %s [%s]", dcc[idx].nick, handle, randpass ? "random" : "something");
     dprintf(idx, "Password for '%s' changed to: %s\n", handle, pass);
     write_userfile(idx);
@@ -1422,8 +1433,7 @@ static void cmd_botcmd(int idx, char *par)
   // Restrict dangerous mass commands ('botcmd *' (any *) or 'botcmd &')
   if ((strchr(botm, '*') && !findbot(botm)) || !strcmp(botm, "&") || botm[0] == '%') {
     if (!strncasecmp(cmd, "di", 2) || (!strncasecmp(cmd, "res", 3) && strncasecmp(cmd, "reset", 5)) || !strncasecmp(cmd, "sui", 3) || !strncasecmp(cmd, "pl", 2) || !strncasecmp(cmd, "ac", 2) ||
-        !strncasecmp(cmd, "j", 1) || (!strncasecmp(cmd, "dump", 4) && (!strncasecmp(par, "privmsg", 7) || !strncasecmp(par, "notice", 6) || !strncasecmp(par, "quit", 4))) ||
-        ((!strncasecmp(cmd, "tcl", 3) || !strncasecmp(cmd, "script", 6)) && strstr(par, "privmsg"))) {
+        !strncasecmp(cmd, "j", 1) || (!strncasecmp(cmd, "dump", 4) && (!strncasecmp(par, "privmsg", 7) || !strncasecmp(par, "notice", 6) || !strncasecmp(par, "quit", 4)))) {
       dprintf(idx, "Not a good idea.\n");
       return;
     } else if (strchr(botm, '*') && !(dcc[idx].user->flags & USER_OWNER)) {
@@ -1997,7 +2007,7 @@ static void cmd_encrypt(int idx, char *par)
 static void cmd_encrypt_fish(int idx, char *par)
 {
   if (!par[0]) {
-    dprintf(idx, "Usage: encrypt_fish <key> <string>\n");
+    dprintf(idx, "Usage: encrypt_fish <key> <string> [cbc]\n");
     return;
   }
 
@@ -2006,20 +2016,39 @@ static void cmd_encrypt_fish(int idx, char *par)
   char *key = newsplit(&par);
 
   if (!par[0]) {
-    dprintf(idx, "Usage: encrypt_fish <key> <string>\n");
+    dprintf(idx, "Usage: encrypt_fish <key> <string> [cbc]\n");
     return;
   }
 
-  const char salt2[] = SALT2;
+  bool use_cbc = false;
+  bd::String data(par);
+  // Check for trailing "cbc"
+  size_t len = data.length();
+  if (len >= 4 && data(len - 4, 4) == " cbc") {
+    use_cbc = true;
+    data.resize(len - 4);
+  } else if (len >= 3 && data(len - 3, 3) == "cbc" && (len == 3 || data[len - 4] == ' ')) {
+    use_cbc = true;
+    data.resize(len - 3);
+  }
 
-  bd::String bf_crypt = egg_bf_encrypt(bd::String(par), bd::String(key ? key : salt2));
-  dprintf(idx, "encrypt_fish(%s) = %s\n", par, bf_crypt.c_str());
+  const char salt2[] = SALT2;
+  bd::String bf_key(key ? key : salt2);
+  bd::String bf_crypt;
+
+  if (use_cbc) {
+    bf_crypt = fish_bf_cbc_encrypt(bf_key, data);
+    dprintf(idx, "encrypt_fish(%s) = %s [CBC]\n", data.c_str(), bf_crypt.c_str());
+  } else {
+    bf_crypt = egg_bf_encrypt(data, bf_key);
+    dprintf(idx, "encrypt_fish(%s) = %s [ECB]\n", data.c_str(), bf_crypt.c_str());
+  }
 }
 
 static void cmd_decrypt_fish(int idx, char *par)
 {
   if (!par[0]) {
-    dprintf(idx, "Usage: decrypt_fish <key> <string>\n");
+    dprintf(idx, "Usage: decrypt_fish <key> <string> [cbc]\n");
     return;
   }
 
@@ -2028,14 +2057,39 @@ static void cmd_decrypt_fish(int idx, char *par)
   char *key = newsplit(&par);
 
   if (!par[0]) {
-    dprintf(idx, "Usage: decrypt_fish <key> <string>\n");
+    dprintf(idx, "Usage: decrypt_fish <key> <string> [cbc]\n");
     return;
   }
 
-  const char salt2[] = SALT2;
+  bool use_cbc = false;
+  bd::String data(par);
+  // Check for trailing "cbc"
+  size_t len = data.length();
+  if (len >= 4 && data(len - 4, 4) == " cbc") {
+    use_cbc = true;
+    data.resize(len - 4);
+  } else if (len >= 3 && data(len - 3, 3) == "cbc" && (len == 3 || data[len - 4] == ' ')) {
+    use_cbc = true;
+    data.resize(len - 3);
+  }
 
-  bd::String bf_decrypt = egg_bf_decrypt(bd::String(par), bd::String(key ? key : salt2));
-  dprintf(idx, "decrypt_fish(%s) = %s\n", par, bf_decrypt.c_str());
+  const char salt2[] = SALT2;
+  bd::String bf_key(key ? key : salt2);
+  bd::String bf_decrypt;
+
+  if (use_cbc) {
+    // Strip +OK * prefix if present
+    if (data(0, 5) == "+OK *") {
+      bd::String ciphertext(data.cbegin() + 5, data.length() - 5);
+      bf_decrypt = fish_bf_cbc_decrypt(bf_key, ciphertext);
+    } else {
+      bf_decrypt = fish_bf_cbc_decrypt(bf_key, data);
+    }
+    dprintf(idx, "decrypt_fish(%s) = %s [CBC]\n", data.c_str(), bf_decrypt.c_str());
+  } else {
+    bf_decrypt = egg_bf_decrypt(data, bf_key);
+    dprintf(idx, "decrypt_fish(%s) = %s [ECB]\n", data.c_str(), bf_decrypt.c_str());
+  }
 }
 
 static void cmd_decrypt(int idx, char *par)
@@ -2729,8 +2783,16 @@ static void cmd_chattr(int idx, char *par)
       }
     }
   }
-  if (chg && !conf.bot->hub)
+  if (chg && !conf.bot->hub) {
     check_this_user(hand, 0, NULL);
+    if ((of ^ u2->flags) & BOT_CHANHUB) {
+      chatout("*** %s is now a chathub (+c).\n", u2->handle);
+      if (ssl_use == 2)
+        chatout("*** Jump to an SSL server for auth/-g to work.\n");
+    }
+  }
+  if (conf.bot->hub && chg && ((of ^ u2->flags) & BOT_CHANHUB) && (u2->flags & BOT_CHANHUB))
+    reshare_auth_values();
   if (tmpchg)
     free(tmpchg);
   if (conf.bot->hub && save)
@@ -3359,6 +3421,10 @@ static void cmd_newleaf(int idx, char *par)
       host = newsplit(&par);
       addhost_by_handle(handle, host);
       dprintf(idx, "Added host '%s' to leaf: %s\n", host, handle);
+      if (!strncasecmp(host, "-telnet!", 8)) {
+        seed_host_equivalents(handle, host);
+        dprintf(idx, "Adding equivalent host for '%s' once resolved.\n", host);
+      }
       if ((p = strchr(host, '@'))) {
         hostname = ++p;
         af_type = is_dotted_ip(hostname);
@@ -3800,6 +3866,10 @@ static void cmd_pls_host(int idx, char *par)
     dprintf(idx, "The hostmask '%s' is already there.\n", phost);
   else {
     addhost_by_handle(handle, phost);
+    if (!strncasecmp(phost, "-telnet!", 8)) {
+      seed_host_equivalents(handle, phost);
+      dprintf(idx, "Adding equivalent host for '%s' once resolved.\n", phost);
+    }
     update_mod(handle, dcc[idx].nick, "+host", phost);
     dprintf(idx, "Added host '%s' to %s.\n", phost, handle);
   }
@@ -3823,6 +3893,10 @@ static void cmd_pls_host(int idx, char *par)
       dprintf(idx, "The hostmask '%s' is already there.\n", phost);
     else {
       addhost_by_handle(handle, phost);
+      if (!strncasecmp(phost, "-telnet!", 8)) {
+        seed_host_equivalents(handle, phost);
+        dprintf(idx, "Adding equivalent host for '%s' once resolved.\n", phost);
+      }
       dprintf(idx, "Added host '%s' to %s.\n", phost, handle);
     }
   }
@@ -4006,6 +4080,12 @@ static void cmd_clearhosts(int idx, char *par)
     set_user(&USERENTRY_HOSTS, u2, "none");
     noshare = 0;
     dprintf(idx, "Cleared hosts for %s.\n", handle);
+    /* Don't revoke the trust of a bot that is currently linked: re-add its
+     * live -telnet! link host(s), and have the bot itself re-report its own
+     * IRC hostmask right away. */
+    seed_live_link_hosts(handle);
+    if (!strcasecmp(handle, conf.bot->nick))
+      check_hostmask();
     if (!conf.bot->hub && server_online)
       check_this_user(handle, 1, NULL);
   } else
@@ -4097,7 +4177,7 @@ static void rcmd_ver(const char * fbot, const char * fhand, const char * fidx) {
   if (uname(&un) < 0) {
     strlcat(tmp, "(unknown OS)", sizeof(tmp));
   } else {
-    if (updated) {
+    if (UpdateModule::is_updated()) {
       simple_snprintf(&tmp[strlen(tmp)], sizeof(tmp) - strlen(tmp), " %s %s (%s) - UPDATED", un.sysname, un.release, un.machine);
     } else
       simple_snprintf(&tmp[strlen(tmp)], sizeof(tmp) - strlen(tmp), " %s %s (%s)", un.sysname, un.release, un.machine);
@@ -4204,8 +4284,8 @@ static void cmd_netlag(int idx, char * par) {
 
   putlog(LOG_CMDS, "*", "#%s# netlag", dcc[idx].nick);
   
-  timer_get_now(&tv);
-  simple_snprintf(tmp, sizeof(tmp), "ping %li", (long) ((tv.sec % 10000) * 100 + (tv.usec * 100) / (1000000)));
+  timer_update_now(&tv);
+  simple_snprintf(tmp, sizeof(tmp), "ping %li", (long) ((tv.sec % 10000) * 1000 + tv.usec / 1000));
   dprintf(idx, "Sent ping to all linked bots\n");
   botnet_send_cmd_broad(-1, conf.bot->nick, dcc[idx].nick, idx, tmp);
 }
@@ -4223,9 +4303,9 @@ static void rcmd_pong(const char *frombot, const char *fromhand, const char *fro
   if ((i >= 0) && (i < dcc_total) && (dcc[i].type == &DCC_CHAT) && (!strcmp(dcc[i].nick, fromhand))) {
     egg_timeval_t tv;
 
-    timer_get_now(&tv);
-    long tm = ((tv.sec % 10000) * 100 + (tv.usec * 100) / (1000000)) - atol(par);
-    dprintf(i, "Pong from %s: %d.%d seconds\n", frombot, (int)(tm / 100), (int)(tm % 100));
+    timer_update_now(&tv);
+    long tm = ((tv.sec % 10000) * 1000 + tv.usec / 1000) - atol(par);
+    dprintf(i, "Pong from %s: %ld ms\n", frombot, tm);
   }
 }
 
@@ -4726,23 +4806,23 @@ void cmd_test(int idx, char *par)
   putlog(LOG_CMDS, "*", "#%s# test", dcc[idx].nick);
 }
 
-#ifdef USE_SCRIPT_TCL
-void cmd_tcl(int idx, char *par)
+static void cmd_tz(int idx, char *par)
 {
-  if (!isowner(dcc[idx].nick)) {
-    dprintf(idx, "tcl is only available to permanent owners.\n");
+  if (!par[0]) {
+    dprintf(idx, "Timezone: %s\n", tz_format(dcc[idx].u.chat->tz_offset));
     return;
   }
 
-  putlog(LOG_CMDS, "*", "#%s# tcl", dcc[idx].nick);
+  int offset = tz_parse(par);
+  if (offset == TZ_ERR) {
+    dprintf(idx, "Invalid timezone: %s. Use: UTC, UTC+N, UTC-N, UTC+N:M\n", par);
+    return;
+  }
 
-  bd::String result(tcl_eval(par));
-  if (dcc[idx].irc && strcmp(dcc[idx].u.chat->con_chan, "*")) {
-      privmsg(dcc[idx].u.chat->con_chan, tcl_eval(par), DP_SERVER);
-  } else
-    dprintf(idx, result.c_str(), DP_SERVER);
+  dcc[idx].u.chat->tz_offset = offset;
+  console_dostore(idx);
+  dprintf(idx, "Timezone set to %s\n", tz_format(offset));
 }
-#endif
 
 void cmd_botlink(int idx, char *par)
 {
@@ -4868,9 +4948,6 @@ cmd_t C_dcc[] =
   {"w", 		"n", 	(Function) cmd_w, 		NULL, 0},
   {"channels", 		"", 	(Function) cmd_channels, 	NULL, 0},
   {"test",		"",	(Function) cmd_test,		NULL, 0},
-#ifdef USE_SCRIPT_TCL
-  {"tcl",		"a",	(Function) cmd_tcl,		NULL, AUTH_ALL},
-#endif
   {"botlink",		"a",	(Function) cmd_botlink,		NULL, 0},
   {"randstring", 	"", 	(Function) cmd_randstring, 	NULL, AUTH_ALL},
   {"hash",		"",	(Function) cmd_hash,		NULL, AUTH_ALL},
@@ -4886,6 +4963,7 @@ cmd_t C_dcc[] =
   {"hublevel", 		"a", 	(Function) cmd_hublevel, 	NULL, HUB},
   {"lagged", 		"m", 	(Function) cmd_lagged, 		NULL, HUB},
   {"uplink", 		"a", 	(Function) cmd_uplink, 		NULL, HUB},
+  {"tz", 		"", 	(Function) cmd_tz, 		NULL, 0},
   {NULL,		NULL,	NULL,				NULL, 0}
 };
 /* vim: set sts=2 sw=2 ts=8 et: */

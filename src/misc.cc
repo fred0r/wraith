@@ -54,6 +54,7 @@
 #include "userrec.h"
 #include "stat.h"
 #include "net.h"
+#include "socket.h"
 #include "EncryptedStream.h"
 #include <bdlib/src/String.h>
 #include <bdlib/src/Stream.h>
@@ -221,7 +222,7 @@ char *newsplit(char **rest, char delim, bool trim)
  * there is no nick.
  * '!' as a nick/user separator must precede any '@' characters.
  * Otherwise it will be considered a part of the host.
- * Supported types are listed in tcl-commands.doc in the maskhost
+ * Supported types are listed in the maskhost
  * command section. Type 3 resembles the older maskhost() most closely.
  *
  * Specific examples (with type=3):
@@ -413,12 +414,12 @@ void show_banner(int idx)
   if (dcc[idx].status & STAT_BANNER)
     dumplots(-dcc[idx].sock, "", wbanner()); 
   dprintf(idx, " \n");
-  dprintf(-dcc[idx].sock, STR(" -------------------------------------------------------- \n"));
-  dprintf(-dcc[idx].sock, STR("|             - http://wraith.botpack.net/ -             |\n"));
-  dprintf(-dcc[idx].sock, STR("|  Get Shell/Irc/Web hosting @ http://www.xzibition.com  |\n"));
-  dprintf(-dcc[idx].sock, STR("|     Help support wraith development by signing up.     |\n"));
-  dprintf(-dcc[idx].sock, STR("|  Use coupon code 'wraith' for 30%% off lifetime         |\n"));
-  dprintf(-dcc[idx].sock, STR(" -------------------------------------------------------- \n"));
+  dprintf(-dcc[idx].sock, "%s", STR(" -------------------------------------------------------- \n"));
+  dprintf(-dcc[idx].sock, "%s", STR("|             - http://wraith.botpack.net/ -             |\n"));
+  dprintf(-dcc[idx].sock, "%s", STR("|  Get Shell/Irc/Web hosting @ http://www.xzibition.com  |\n"));
+  dprintf(-dcc[idx].sock, "%s", STR("|     Help support wraith development by signing up.     |\n"));
+  dprintf(-dcc[idx].sock, "%s", STR("|  Use coupon code 'wraith' for 30%% off lifetime         |\n"));
+  dprintf(-dcc[idx].sock, "%s", STR(" -------------------------------------------------------- \n"));
   dprintf(idx, " \n");
 
 }
@@ -759,7 +760,7 @@ readsocks(const char *fname)
       nuke_server("emoquit");
     } else {
       simple_snprintf(nserv, sizeof(nserv), "%s:%d", dcc[servidx].host, dcc[servidx].port);
-      add_server(nserv);
+      add_server(nserv, (server_using_ssl != 0));
       curserv = 0;
       keepnick = 0; /* Wait to change nicks until relinking, fixes nick/jupenick switching issues during restart */
       reset_flood();
@@ -806,8 +807,12 @@ restart(int idx)
   noshare = 1;
 
   /* kill all connections except STDOUT/server */
+  /* Preserve unix domain sockets — conf.bots connected via local socket
+   * stay alive and will detect the EOF when execvp replaces this process.
+   * They reconnect to the new binary without restarting or dropping IRC. */
   for (fd = 0; fd < dcc_total; fd++) {
-    if (dcc[fd].type && dcc[fd].type != &SERVER_SOCKET && dcc[fd].sock != STDOUT) {
+    if (dcc[fd].type && dcc[fd].type != &SERVER_SOCKET && dcc[fd].sock != STDOUT &&
+        !(dcc[fd].status & STAT_UNIXDOMAIN)) {
       if (dcc[fd].sock >= 0)
         killsock(dcc[fd].sock);
       lostdcc(fd);
@@ -850,9 +855,9 @@ restart(int idx)
   if (floodless)
     stream << bd::String::printf(STR("+server_floodless %d\n"), floodless);
   if (in_deaf)
-    stream << bd::String::printf(STR("+in_deaf\n"));
+    stream << bd::String::printf("%s", STR("+in_deaf\n"));
   if (in_callerid)
-    stream << bd::String::printf(STR("+in_callerid\n"));
+    stream << bd::String::printf("%s", STR("+in_callerid\n"));
   for (struct chanset_t *chan = chanset; chan; chan = chan->next)
     if (shouldjoin(chan) && (channel_active(chan) || channel_pending(chan)))
       stream << bd::String::printf(STR("+chan %s\n"), chan->dname);
@@ -862,6 +867,18 @@ restart(int idx)
   replay_cache(-1, &stream);
 
   stream.writeFile(socks->fd);
+
+#ifdef EGG_SSL_EXT
+  /* Send QUIT through SSL so IRC server shows clean quit, not SSL error. */
+  if (servidx >= 0 && dcc[servidx].sock >= 0 && server_using_ssl) {
+    int si = findanysnum(dcc[servidx].sock);
+    if (si != -1 && socklist[si].ssl) {
+      socket_set_nonblock(dcc[servidx].sock, 0);
+      SSL_write(socklist[si].ssl, "QUIT :changing servers\r\n", 26);
+      socket_set_nonblock(dcc[servidx].sock, 1);
+    }
+  }
+#endif
 
   socks->my_close();
 
@@ -891,8 +908,10 @@ restart(int idx)
 
   unlink(conf.bot->pid_file);
   FILE *fp = NULL;
-  if (!(fp = fopen(conf.bot->pid_file, "w")))
+  if (!(fp = fopen(conf.bot->pid_file, "w"))) {
+    putlog(LOG_MISC, "*", STR("Could not restart: cannot write pid file %s: %s"), conf.bot->pid_file, strerror(errno));
     return;
+  }
   fprintf(fp, "%d %s\n", getpid(), socks->file);
   fclose(fp);
 
@@ -937,7 +956,7 @@ int updatebin(int idx, char *par, int secs)
   newbin = strrchr(path, '/');
   if (!newbin) {
     free(path);
-    logidx(idx, STR("Don't know current binary name"));
+    logidx(idx, "%s", STR("Don't know current binary name"));
     return 1;
   }
   newbin++;
@@ -947,10 +966,10 @@ int updatebin(int idx, char *par, int secs)
     free(path);
     return 1;
   }
-  strcpy(newbin, par);
+  strlcpy(newbin, par, path_siz - (newbin - path));
   if (!strcmp(path, binname)) {
     free(path);
-    logidx(idx, STR("Can't update with the current binary"));
+    logidx(idx, "%s", STR("Can't update with the current binary"));
     return 1;
   }
   if (!can_stat(path)) {
@@ -967,11 +986,11 @@ int updatebin(int idx, char *par, int secs)
   /* Check if the new binary is compatible */
   int initialized_code = check_bin_initialized(path);
   if (initialized_code == 2) {
-    logidx(idx, STR("New binary is corrupted or the wrong architecture/operating system."));
+    logidx(idx, "%s", STR("New binary is corrupted or the wrong architecture/operating system."));
     free(path);
     return 1;
   } else if (initialized_code == 1 && !check_bin_compat(path)) {
-    logidx(idx, STR("New binary must be initialized as pack structure has been changed in new version."));
+    logidx(idx, "%s", STR("New binary must be initialized as pack structure has been changed in new version."));
     free(path);
     return 1;
   }
@@ -987,7 +1006,7 @@ int updatebin(int idx, char *par, int secs)
   Tempfile *conffile = new Tempfile("conf");
 
   if (writeconf(NULL, conffile->fd, CONF_ENC)) {
-    logidx(idx, STR("Failed to write temporary config file for update."));
+    logidx(idx, "%s", STR("Failed to write temporary config file for update."));
     delete conffile;
     return 1;
   }
@@ -1000,6 +1019,8 @@ int updatebin(int idx, char *par, int secs)
   i = simple_exec(argv);
   if (i == -1 || WEXITSTATUS(i) != 2) {
     logidx(idx, STR("Couldn't restart new binary (error %d)"), i);
+    if (WEXITSTATUS(i) == 1)
+      logidx(idx, "%s", STR("Hint: new binary needs ChaCha20-Poly1305; your SSL library may be too old."));
     delete conffile;
     return i;
   }
@@ -1041,7 +1062,7 @@ int updatebin(int idx, char *par, int secs)
     /* Make all other bots do a soft restart */
     conf_checkpids(conf.bots);
     conf_killbot(conf.bots, NULL, NULL, SIGHUP);
-    
+
     /* invoked with -u */
     if (updating == UPDATE_AUTO) {
       if (conf.bot->pid)
@@ -1091,6 +1112,9 @@ int bot_aggressive_to(struct userrec *u)
 int goodpass(const char *pass, int idx, char *nick)
 {
   if (!pass[0]) 
+    return 0;
+
+  if (strlen(pass) < 8)
     return 0;
 
   char tell[201] = "", last = 0;
@@ -1470,5 +1494,61 @@ int skipline (char *line, int *skip) {
     if (!multi) (*skip) = 0;
   }
   return (*skip);
+}
+
+const char *tz_format(int offset)
+{
+  static char buf[16] = "";
+  int hours, mins;
+
+  if (offset == 0) {
+    strlcpy(buf, "UTC", sizeof(buf));
+    return buf;
+  }
+
+  hours = offset / 3600;
+  mins = (offset % 3600) / 60;
+
+  if (mins)
+    snprintf(buf, sizeof(buf), "UTC%+d:%02d", hours, mins < 0 ? -mins : mins);
+  else
+    snprintf(buf, sizeof(buf), "UTC%+d", hours);
+
+  return buf;
+}
+
+int tz_parse(const char *str)
+{
+  int sign = 1, hours = 0, mins = 0;
+  const char *p = str;
+
+  if (!str || !str[0])
+    return TZ_ERR;
+
+  if (!strncasecmp(p, "UTC", 3))
+    p += 3;
+
+  if (*p == '+')      { sign = 1;  p++; }
+  else if (*p == '-') { sign = -1; p++; }
+  else if (*p == '\0') return 0;
+  else return TZ_ERR;
+
+  if (!*p || !isdigit((unsigned char)*p))
+    return TZ_ERR;
+
+  hours = atoi(p);
+  while (*p && isdigit((unsigned char)*p)) p++;
+
+  if (*p == ':') {
+    p++;
+    if (!*p || !isdigit((unsigned char)*p)) return TZ_ERR;
+    mins = atoi(p);
+    while (*p && isdigit((unsigned char)*p)) p++;
+  }
+
+  if (*p != '\0')           return TZ_ERR;
+  if (hours < 0 || hours > 23 || mins < 0 || mins > 59) return TZ_ERR;
+
+  return sign * (hours * 3600 + mins * 60);
 }
 /* vim: set sts=2 sw=2 ts=8 et: */

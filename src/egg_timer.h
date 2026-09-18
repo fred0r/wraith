@@ -2,6 +2,7 @@
 #define _EGG_TIMER_H_
 
 #include "types.h"
+#include <string>
 
 typedef struct egg_timeval_b {
 	long sec;
@@ -9,6 +10,55 @@ typedef struct egg_timeval_b {
 } egg_timeval_t;
 
 #define TIMER_REPEAT 1
+
+class Timer {
+public:
+	Timer(const char* name, int id, void* callback, void* client_data, int flags);
+	~Timer();
+	Timer(const Timer&) = delete;
+	Timer& operator=(const Timer&) = delete;
+
+	const std::string& name() const { return name_; }
+	int id() const { return id_; }
+	void* callback() const { return callback_; }
+	void* client_data() const { return client_data_; }
+	int flags() const { return flags_; }
+	bool repeats() const { return (flags_ & TIMER_REPEAT) != 0; }
+	int called() const { return called_; }
+	const egg_timeval_t& howlong() const { return howlong_; }
+	const egg_timeval_t& trigger_time() const { return trigger_time_; }
+
+	void set_trigger_time(long sec, long usec) {
+		trigger_time_.sec = sec;
+		trigger_time_.usec = usec;
+	}
+	void inc_called() { ++called_; }
+	void clear_name() { name_.clear(); }
+
+	void update_trigger(long now_sec, long now_usec) {
+		trigger_time_.sec = now_sec + howlong_.sec;
+		trigger_time_.usec = now_usec + howlong_.usec;
+		if (trigger_time_.usec >= 1000000) {
+			trigger_time_.usec -= 1000000;
+			++trigger_time_.sec;
+		}
+	}
+
+	void set_howlong(long sec, long usec) {
+		howlong_.sec = sec;
+		howlong_.usec = usec;
+	}
+
+private:
+	std::string name_;
+	int id_;
+	void* callback_;
+	void* client_data_;
+	egg_timeval_t howlong_;
+	egg_timeval_t trigger_time_;
+	int flags_;
+	int called_;
+};
 
 /* Create a simple timer with no client data and no flags. */
 #define timer_create(howlong,name,callback) timer_create_complex(howlong, name, callback, NULL, 0)

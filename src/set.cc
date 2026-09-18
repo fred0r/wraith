@@ -95,7 +95,7 @@ static variable_t vars[] = {
  VAR("dccauth",		&dccauth,		VAR_INT|VAR_BOOL,				0, 1, "0"),
  VAR("deaf",		&use_deaf,		VAR_INT|VAR_BOOL|VAR_NOLHUB,			0, 1, "1"),
  VAR("fight-threshold",	&fight_threshold,	VAR_INT|VAR_NOLOC,				0, 0, "0"),
- VAR("fish-auto-keyx",	&fish_auto_keyx,	VAR_INT|VAR_BOOL|VAR_NOLHUB,			0, 1, "1"),
+ VAR("fish-auto-keyx",	&fish_auto_keyx,	VAR_INT|VAR_BOOL|VAR_NOLHUB,			0, 1, "0"),
  VAR("fish-paranoid",	&fish_paranoid,		VAR_INT|VAR_BOOL|VAR_NOLHUB,			0, 1, "0"),
  VAR("flood-callerid",	&flood_callerid,	VAR_RATE|VAR_NOLHUB,				0, 0, "6:2"),
  VAR("flood-ctcp",	&flood_ctcp,		VAR_RATE|VAR_NOLHUB,				0, 0, "3:60"),
@@ -109,8 +109,8 @@ static variable_t vars[] = {
  VAR("jupenick",	jupenick,		VAR_WORD|VAR_NOHUB|VAR_JUPENICK|VAR_NODEF,  	0, 0, NULL),
  VAR("kill-threshold",	&kill_threshold,	VAR_INT|VAR_NOLOC,				0, 0, "0"),
  VAR("lag-threshold",	&lag_threshold,		VAR_INT|VAR_NOLHUB,				0, 0, "15"),
- VAR("link_cleartext",	&link_cleartext,	VAR_INT|VAR_NOLOC|VAR_BOOL,			0, 1, "0"),
- VAR("login",		&login,			VAR_INT|VAR_DETECTED,				0, 4, "warn"),
+  VAR("link_cleartext",	&link_cleartext,	VAR_INT|VAR_NOLOC|VAR_BOOL,			0, 1, "0"),
+  VAR("login",		&login,			VAR_INT|VAR_DETECTED,				0, 4, "warn"),
  VAR("manop-warn",	&manop_warn,		VAR_INT|VAR_BOOL|VAR_NOLHUB,			0, 1, "1"),
  VAR("motd",		motd,			VAR_STRING|VAR_HIDE|VAR_NOLOC,			0, 0, NULL),
  VAR("msg-ident",	msgident,		VAR_WORD|VAR_NOLHUB,				0, 0, NULL),
@@ -131,7 +131,7 @@ static variable_t vars[] = {
  VAR("server-cycle-wait",&server_cycle_wait,	VAR_INT|VAR_NOLHUB,				5, 500, "30"),
  VAR("server-port",	&default_port,		VAR_INT|VAR_SHORT|VAR_NOLHUB,			0, 65535, "6667"),
  VAR("server-port-ssl",	&default_port_ssl,	VAR_INT|VAR_SHORT|VAR_NOLHUB,			0, 65535, "6697"),
- VAR("server-use-ssl",	&ssl_use,		VAR_INT|VAR_BOOL|VAR_NOLHUB,			0, 1, "0"),
+ VAR("server-use-ssl",	&ssl_use,		VAR_INT|VAR_NOLHUB,			0, 2, "0"),
  VAR("servers",		&serverlist,		VAR_SERVERS|VAR_LIST|VAR_SHUFFLE|VAR_NOLHUB|VAR_NOLDEF,	0, 0, DEFAULT_SERVERS),
  VAR("servers-ssl",	&serverlist,		VAR_SERVERS|VAR_LIST|VAR_SHUFFLE|VAR_NOLHUB|VAR_NOLDEF,	0, 0, DEFAULT_SERVERS_SSL),
  VAR("servers6",	&serverlist,		VAR_SERVERS|VAR_LIST|VAR_SHUFFLE|VAR_NOLHUB|VAR_NOLDEF,	0, 0, DEFAULT_SERVERS6),
@@ -147,13 +147,17 @@ static inline variable_t *var_get_var_by_name(const char *name) __attribute__((p
 
 static const char* get_server_type()
 {
-  if (!ssl_use && !conf.bot->net.host6 && !conf.bot->net.ip6) {
+  /* Use the per-bot effective mode so ssl_use=2 (SSL for +c only) selects
+   * the matching list; effective_ssl_use() is also NULL-safe for conf.bot. */
+  const bool use_ssl = (effective_ssl_use() >= 1);
+
+  if (!use_ssl && !conf.bot->net.host6 && !conf.bot->net.ip6) {
     return "servers";
-  } else if (!ssl_use && (conf.bot->net.host6 || conf.bot->net.ip6)) {
+  } else if (!use_ssl && (conf.bot->net.host6 || conf.bot->net.ip6)) {
     return "servers6";
-  } else if (ssl_use && !conf.bot->net.host6 && !conf.bot->net.ip6) {
+  } else if (use_ssl && !conf.bot->net.host6 && !conf.bot->net.ip6) {
     return "servers-ssl";
-  } else if (ssl_use && (conf.bot->net.host6 || conf.bot->net.ip6)) {
+  } else if (use_ssl && (conf.bot->net.host6 || conf.bot->net.ip6)) {
     return "servers6-ssl";
   }
   return "";
@@ -266,6 +270,11 @@ sdprintf("var (mem): %s -> %s", var->name, datain ? datain : "(NULL)");
     shuffle(data, ",", strlen(data) + 1);
   }
 
+  /* Capture the effective SSL mode before the value is written so a
+   * server-use-ssl change that does not actually change it (e.g. 0<->2 for
+   * a non-+c bot) does not needlessly reprocess/reconnect the server list. */
+  const int old_ssl_mode = !strcmp(var->name, "server-use-ssl") ? effective_ssl_use() : 0;
+
   /* figure out it's type and set it's variable to the data */
   if ((var->flags & VAR_INT) && !(var->flags & VAR_BOOL) && !(var->flags & VAR_DETECTED)) {
     int number = atoi(data);
@@ -281,7 +290,7 @@ sdprintf("var (mem): %s -> %s", var->name, datain ? datain : "(NULL)");
       *(int *) (var->mem) = number;
 
     if (var->flags & VAR_CLOAK && !conf.bot->hub)
-      scriptchanged();
+      CtcpModule::script_changed();
   } else if (var->flags & VAR_DETECTED) {
     int number = data ? det_translate(data) : DET_IGNORE;
 #ifndef DEBUG
@@ -403,8 +412,8 @@ sdprintf("var (mem): %s -> %s", var->name, datain ? datain : "(NULL)");
     }
 
     if (data)
-      add_server(data);
-    
+      add_server(data, effective_ssl_use() >= 1);
+
     if (server_online) {
       curserv = -1;
       next_server(&curserv, cursrvname, &curservport, NULL);
@@ -412,10 +421,15 @@ sdprintf("var (mem): %s -> %s", var->name, datain ? datain : "(NULL)");
   }
 
   if (!conf.bot->hub && !strcmp(var->name, "server-use-ssl")) {
-    // Need to reload the server settings since we may want a different list now
-    sdprintf("server-use-ssl changed, reprocessing server list");
-    variable_t *servers = var_get_var_by_name(get_server_type());
-    var_set_mem(servers, servers->ldata ? servers->ldata : servers->gdata);
+    /* Only reprocess/reconnect if the effective mode really changed. A
+     * non-+c bot going 0<->2 still connects plain, so it should keep its
+     * live connection and server list untouched. */
+    if (effective_ssl_use() != old_ssl_mode) {
+      // Need to reload the server settings since we may want a different list now
+      sdprintf("server-use-ssl changed, reprocessing server list");
+      variable_t *servers = var_get_var_by_name(get_server_type());
+      var_set_mem(servers, servers->ldata ? servers->ldata : servers->gdata);
+    }
   }
 
   // Check if should part/join channels based on groups changing
@@ -539,6 +553,21 @@ var_get_gdata(const char *name) {
   return var && var->gdata ? var->gdata : NULL;
 }
 
+/* auth-key is only delivered to hubs (which forward) and +c chathubs - the
+ * peers that can answer a login challenge. `except` skips the peer a change was
+ * received from. */
+void distribute_authkey_var(int except)
+{
+  for (int i = 0; i < dcc_total; i++) {
+    if (i == except || !dcc[i].type || dcc[i].type != &DCC_BOT)
+      continue;
+    if (!(dcc[i].hub || (dcc[i].user && (dcc[i].user->flags & BOT_CHANHUB))))
+      continue;
+
+    botnet_send_var_value(i, "auth-key", auth_key);
+  }
+}
+
 void var_set(variable_t *var, const char *target, const char *datain)
 {
   if (target) {
@@ -611,6 +640,9 @@ sdprintf("var: %s (local): %s", var->name, data ? data : "(NULL)");
   } else if (target == NULL) {
     if (var->ldata)
       domem = 0;
+    /* server-use-ssl: remember the mode before the change so old peers are
+     * only pushed a compatible value when it actually changes. */
+    const int old_ssl_use = !strcmp(var->name, "server-use-ssl") ? ssl_use : -1;
     free(var->gdata);
     var->gdata = NULL;
 #ifdef DEBUG
@@ -624,9 +656,17 @@ sdprintf("var: %s (global): %s", var->name, data ? data : "(NULL)");
     if (domem && var->mem)
       var_set_mem(var, var->gdata);
 
-    /* It's global, we need to update the botnet with it */
-    if (!set_noshare)
-      botnet_send_var_broad(-1, var);
+    /* It's global, we need to update the botnet with it. server-use-ssl and
+     * auth-key are delivered per direct child so old/non-auth peers never
+     * receive them. */
+    if (!set_noshare) {
+      if (!strcmp(var->name, "server-use-ssl"))
+        distribute_ssl_var(-1, old_ssl_use);
+      else if (!strcmp(var->name, "auth-key"))
+        distribute_authkey_var();
+      else
+        botnet_send_var_broad(-1, var);
+    }
   }
 //  if (freedata)
 //    free(data);
@@ -709,10 +749,24 @@ void var_userfile_share_line(char *line, int idx, bool share)
   }
 
   set_noshare = 1;
+  const bool is_ssl = !strcmp(var->name, "server-use-ssl");
+  const bool is_authkey = !strcmp(var->name, "auth-key");
+  const int old_ssl_use = is_ssl ? ssl_use : -1;
+
   var_set(var, NULL, line);
-  /* leaf bots don't need to bother attempting to share; there are no bots linked to us! */
-  if (share && (conf.bot->hub || conf.bot->localhub))
-    botnet_send_var_broad(idx, var);
+  /* server-use-ssl and auth-key arrive via unicast 'va' (share == 0) so they
+   * are never flooded to old/non-auth peers, but a hub/localhub must still
+   * forward them to reach grandchildren; each distribute helper filters per
+   * child. Other vars keep the historical 'vab'-only forwarding. Leaf bots
+   * have no bots below them, so they never need to share. */
+  if ((share || is_ssl || is_authkey) && (conf.bot->hub || conf.bot->localhub)) {
+    if (is_ssl)
+      distribute_ssl_var(idx, old_ssl_use);
+    else if (is_authkey)
+      distribute_authkey_var(idx);
+    else
+      botnet_send_var_broad(idx, var);
+  }
   set_noshare = 0;
 }
 
@@ -917,10 +971,14 @@ static char *var_rem_list(const char *botnick, variable_t *var, const char *elem
   return ret;
 }
 
-void write_vars_and_cmdpass(bd::Stream& stream, int idx)
+void write_vars_and_cmdpass(bd::Stream& stream, int peer_numver)
 {
   putlog(LOG_DEBUG, "@", "Writing set entries...");
   stream << bd::String::printf(SET_NAME " - -\n");
+
+  /* Peers older than mode-2 support parse server-use-ssl as a 0/1 bool and
+   * would clamp 2 -> 1 (SSL-only), so send them the compatible value. */
+  const bool old_peer = (peer_numver >= 0 && peer_numver < SSL_MODE2_MIN_NUMVER);
 
   int i = 0;
 
@@ -933,8 +991,19 @@ void write_vars_and_cmdpass(bd::Stream& stream, int idx)
          (!(vars[i].flags & VAR_NOLDEF) ||
           ((vars[i].flags & VAR_NOLDEF) && have_linked_to_hub))
          )) {
+      const char *value = vars[i].gdata;
+      char compat[2] = "";
+
+      if (old_peer && !strcmp(vars[i].name, "server-use-ssl")) {
+        compat[0] = '0' + ssl_compat_value(value ? atoi(value) : 0);
+        value = compat;
+      } else if (!strcmp(vars[i].name, "auth-key") &&
+                 peer_numver >= 0 && !userfile_peer_allowed()) {
+        continue;   /* auth-key is only sent to hubs and +c peers */
+      }
+
       /* send blanks if our variable isn't set, theirs MIGHT be set and needs to be UNSET */
-      stream << bd::String::printf("@ %s %s\n", vars[i].name, vars[i].gdata ? vars[i].gdata : "");
+      stream << bd::String::printf("@ %s %s\n", vars[i].name, value ? value : "");
     }
   }
 

@@ -10,6 +10,7 @@
 
 void botnet_send_var(int idx, variable_t *);
 void botnet_send_var_broad(int idx, variable_t *);
+void botnet_send_var_value(int idx, const char *name, const char *value);
 void putbot(const char *, const char *);
 void putallbots(const char *);
 int add_note(char *, char *, char *, int, int);

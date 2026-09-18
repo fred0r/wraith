@@ -63,15 +63,17 @@ struct dcc_t {
   int dns_id;
   in_port_t port;
   char simulbot[HANDLEN + 1];       /* used for hub->leaf cmd simulation, holds bot that results should be sent to */
-  char hash[MD5_HASH_LENGTH + 1];                /* used for dcc authing */
+  char hash[SHA256_HASH_LENGTH + 1];                /* SHA256 auth hash (64 + null) */
+  char hash_md5[MD5_HASH_LENGTH + 1];               /* MD5 auth hash for backward compat */
   char shahash[SHA_HASH_LENGTH + 1];
+  char shahash_new[SHA_HASH_LENGTH + 1];       /* SHA1 link hash (rand + ciphers) — downgrade-protected */
   char nick[NICKLEN];
   char whois[UHOSTLEN];
   char host[UHOSTLEN];
 #ifdef USE_IPV6
   char host6[121];              /* easier.. ipv6 address in regular notation (3ffe:80c0:225::) */
 #endif /* USE_IPV6 */
-  int8_t cflags;	 	/* Color status flags. */
+  int cflags;	 	/* Color status flags. */
 };
 
 struct dns_info {
@@ -94,6 +96,13 @@ struct chat_info {
   char *away;                   /* non-NULL if user is away             */
   char *su_nick;
   char con_chan[81];            /* with console: what channel to view   */
+  int tz_offset;               /* seconds from UTC for partyline ts    */
+};
+
+enum class XferKind : unsigned char {
+  File = 0,
+  Userfile,
+  Binary
 };
 
 struct xfer_info {
@@ -112,6 +121,7 @@ struct xfer_info {
   unsigned short ack_type;      /* type of ack                             */
   char from[NICKLEN];           /* [GET] user who offered the file         */
   char buf[4];                  /* you only need 5 bytes!                  */
+  XferKind kind;                /* userfile / binary / normal file transfer */
 };
 
 struct bot_info {
@@ -147,8 +157,8 @@ struct dupwait_info {
 #define DCT_SHOWWHO   BIT2        /* show the user in .who            */
 #define DCT_REMOTEWHO BIT3        /* show in remote who               */
 #define DCT_VALIDIDX  BIT4        /* valid idx for outputting to
-                                           in tcl                           */
-#define DCT_SIMUL     BIT5        /* can be tcl_simul'd               */
+                                           scripting                          */
+#define DCT_SIMUL     BIT5        /* can be simul'd                   */
 #define DCT_CANBOOT   BIT6        /* can be booted                    */
 #define DCT_          BIT7        /* unused */
 #define DCT_FORKTYPE  BIT8        /* a forking type                   */
@@ -240,5 +250,6 @@ void failed_link(int);
 void dupwait_notify(const char *);
 void send_sysinfo();
 int ansi_len(const char *) __attribute__((pure));
+void seed_live_link_hosts(const char *handle);
 
 #endif /* !_DCC_H */

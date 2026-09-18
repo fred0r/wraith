@@ -153,6 +153,15 @@ extern maskrec *global_bans, *global_exempts, *global_invites;
 #define MASKREC_STICKY 1
 #define MASKREC_PERM   2
 
+class MaskList : public maskrec {
+public:
+  bool is_sticky() const { return flags & MASKREC_STICKY; }
+  bool is_perm() const { return flags & MASKREC_PERM; }
+  bool is_expired(time_t t) const { return !(flags & MASKREC_PERM) && t >= expire; }
+};
+
+static_assert(sizeof(MaskList) == sizeof(maskrec), "MaskList must not change maskrec layout");
+
 /* For every channel i join */
 struct chan_t {
   memberlist *member;
@@ -161,8 +170,12 @@ struct chan_t {
   masklist *invite;
   time_t jointime;
   time_t parttime;
+  time_t groupchange_op_sent;  /* when this bot (or a peer via 'go' msg) last sent group-change ops */
   time_t no_op;
   time_t drone_jointime;
+  time_t invite_retry;         /* when to re-request an invite while waiting to join a +i chan */
+  int invite_retry_ct;         /* consecutive invite re-requests (bounded burst)             */
+  time_t invite_pull;          /* last time an opped bot pulled its group peers in           */
   time_t last_eI;      /* this will stop +e and +I from being checked over and over if the bot is stuck in a
                         * -o+o loop for some reason, hence possibly causing a SENDQ kill
                         */
@@ -176,6 +189,7 @@ struct chan_t {
   int members;
   int splitmembers;
   int do_opreq;
+  int lonely_whined;            /* already logged the no-ops warning for this channel */
   char *topic;
   char *key;
   unsigned short int mode;
@@ -313,6 +327,8 @@ struct chanset_t {
   int role;
 
   unsigned long role_rebalance_cookie;
+
+  int op_delegation_flush_timer;
 };
 
 /* behavior modes for the channel */
