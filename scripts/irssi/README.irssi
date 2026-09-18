@@ -7,5 +7,18 @@ Type these:
 /script load /path/to/wraith.pl
 /auth
 
+Settings:
+
+/set auth_secpass <your_secpass>
+/set auth_authkey <your_authkey>
+/set auth_password <password>       (optional - auto-responds to auth./auth!)
+
+Hash algorithm (default sha256, "md5" for old bots):
+/set auth_hash_algorithm sha256
+/set auth_hash_algorithm md5
+
+The script handles -Auth challenges in both private messages and DCC chat.
+SHA256 (64 hex chars) is preferred; the bot still accepts MD5 (32 hex chars).
+
 This has not been tested with psyBNC, but in theory it will work.
 

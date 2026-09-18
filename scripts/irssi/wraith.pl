@@ -15,6 +15,7 @@ $VERSION = "1.01";
 
 use Irssi::Irc;                 # for DCC object
 use Digest::MD5 qw(md5 md5_hex md5_base64);
+use Digest::SHA qw(sha256_hex);
 use Encode qw(encode_utf8);
 
 sub cmd_auth {
@@ -43,7 +44,11 @@ sub auth($) {
   $secpass = Irssi::settings_get_str('auth_secpass');
   $authkey = Irssi::settings_get_str('auth_authkey');
   $botdump = $hash . $secpass . $authkey ;
-  return md5_hex(encode_utf8($botdump));
+  my $algo = Irssi::settings_get_str('auth_hash_algorithm') || 'sha256';
+  if ($algo eq 'md5') {
+    return md5_hex(encode_utf8($botdump));
+  }
+  return sha256_hex(encode_utf8($botdump));
 }
 
 #this must handle both auth. and -Auth
@@ -70,6 +75,14 @@ Irssi::signal_add "message private", sub {
       $server = $servers[0];
       my $cmd = "/MSG $nick +Auth " . auth($msg);
       $server->command("$cmd");
+    }
+    if ($msg =~ /^auth\.|^auth!/) {
+      $server = $servers[0];
+      my $password = Irssi::settings_get_str('auth_password');
+      if ($password) {
+        my $cmd = "/MSG $nick auth $password";
+        $server->command("$cmd");
+      }
     }  
 };
 
@@ -96,8 +109,10 @@ Irssi::signal_add "dcc chat message", sub {
 };
 
 #Irssi::settings_add_str('auth', 'auth_password', '');
+Irssi::settings_add_str('auth', 'auth_password', '');
 Irssi::settings_add_str('auth', 'auth_secpass', '');
 Irssi::settings_add_str('auth', 'auth_authkey', '');
+Irssi::settings_add_str('auth', 'auth_hash_algorithm', 'sha256');
 
 Irssi::command_bind("auth", "cmd_auth");
 Irssi::print "Wraith authorization script loaded.";

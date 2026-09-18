@@ -1,57 +1,89 @@
 # wraith authorization script
-# By bryan
+# By bryan / fred
 #
-# This expects the md5 executable in $cspath/.BitchX
+# Supports MD5 (external md5 binary) and SHA256 (sha256sum)
 # $botnick is the current nick of the bot.
 # You must /setauth 
 # If you chat a diff bot, you must do that command first.
-# $pass is the DEFPASS setting from your pack.cfg
 
-#change this to your homedir.
+# change this to your homedir
 assign wpath /home/wheel/bryan
 
-#put the 'md5' binary in $HOME/.BitchX/md5 
-
+# put the 'md5' binary in $HOME/.BitchX/md5 for MD5 support
 
 
 alias setauth {
-        if ([$2] == "") {
-          ^eval echo /setauth password secpass authkey <botnick>
+        if ([$4] == "") {
+          ^eval echo /setauth password secpass authkey <hashalgo> <botnick>
+          ^eval echo hashalgo: sha256 (default) or md5
         }          
         ^assign wpass $0
         ^assign wsecpass $1
         ^assign wauthkey $2
-        ^assign wbotnick $3
+        ^assign wauthalgo $3
+        ^assign wbotnick $4
+        if ([$wauthalgo] == []) { ^assign wauthalgo sha256 }
 }
+
 
 alias auth {
         ^assign blah $1$wsecpass$wauthkey
-     
-        ^exec -name secauth $wpath/.BitchX/md5 "-s$blah"
-	^on ^exec "secauth *" {
-          ^eval echo +Auth $1
+        if ([$wauthalgo] == [md5]) {
+          ^exec -name secauth $wpath/.BitchX/md5 "-s$blah"
+        } else {
+          ^exec -name secauth /bin/echo -n $blah | /usr/bin/sha256sum
         }
-
+        ^on ^exec "secauth *" {
+          if ([$wauthalgo] == [md5]) {
+            ^eval echo +Auth $1
+          } else {
+            ^eval echo +Auth $0
+          }
+        }
 }
+
 
 alias secauth {
         ^assign blah $1$wsecpass$wauthkey
-        ^eval echo Returning hash to $0
-        ^exec -name secauth2 $wpath/.BitchX/md5 "-s$blah"
-
-	^on ^exec "secauth2 *" {
-           send +Auth $1
+        if ([$wauthalgo] == [md5]) {
+          ^exec -name secauth2 $wpath/.BitchX/md5 "-s$blah"
+        } else {
+          ^exec -name secauth2 /bin/echo -n $blah | /usr/bin/sha256sum
+        }
+        ^on ^exec "secauth2 *" {
+          if ([$wauthalgo] == [md5]) {
+            send +Auth $1
+          } else {
+            send +Auth $0
+          }
         }
 }
+
 
 on ^dcc_chat "% -Auth *" {
          query =$0
          secauth $0 $2
 }
 
+
 on ^msg "% -Auth *" {
          query $0
          secauth $0 $2
 }
+
+
+on ^msg "% auth.*" {
+         if ([$wauthalgo] == [sha256]) {
+           msg $0 auth $wpass
+         }
+}
+
+
+on ^msg "% auth!" {
+         if ([$wauthalgo] == [sha256]) {
+           msg $0 auth $wpass $username
+         }
+}
+
 
 ^eval xecho -b wraith Authorization Module Loaded.

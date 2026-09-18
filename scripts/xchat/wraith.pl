@@ -2,100 +2,93 @@
 
 use strict;
 use warnings;
-use Digest::MD5 qw(md5 md5_hex md5_base64);
+use Digest::MD5 qw(md5_hex);
+use Digest::SHA qw(sha256_hex);
 use Encode qw(encode_utf8);
 
 my $script = 'wraith-auth';
-my $ver    = '1.0';
-my $dev    = 'bryan';
-my $email  = 'bryan@shatow.net';
-my $url    = '';
+my $ver    = '1.1';
+
+IRC::register($script, $ver, 'Wraith auth script for botpack wraith');
 
 
-IRC::register( "$script", "$ver", '', '' );
+sub get_setting {
+    my ($key, $default) = @_;
+    my $val = IRC::get_pluginpref($key);
+    return defined $val ? $val : $default;
+}
+
+
+sub compute_auth_hash {
+    my ($auth_string) = @_;
+    my $secpass = get_setting('auth_secpass', '');
+    my $authkey = get_setting('auth_authkey', '');
+    my $algo    = get_setting('auth_hash_algorithm', 'sha256');
+
+    if (!$secpass) {
+        IRC::print('[wraith_auth] ERROR: auth_secpass is not set');
+        return undef;
+    }
+    if (!$authkey) {
+        IRC::print('[wraith_auth] ERROR: auth_authkey is not set');
+        return undef;
+    }
+
+    my $data = encode_utf8($auth_string . $secpass . $authkey);
+    return $algo eq 'md5' ? md5_hex($data) : sha256_hex($data);
+}
 
 
 sub cmd_auth {
-  my($data,$server,$witem) = @_;
-  if (!$data) {
-    Irssi:print "Usage: /auth hash\nbefore you can do that, type /set auth, then /set all of the variables that show.\n";
-  } else {
-    Irssi::print auth($data);
-  }
-}
-
-
-sub auth($) {
-  my($data,$server,$witem) = @_;
-  my ($secpass,$authkey,$botdump,$hash);
-  #lets use the right word for the hash.
-  my @words = split " ", $data;
-  if ($data =~ /^\-Auth/) {
-    $hash = $words[1];
-  } else {
-    $hash = $words[0];
-  }
-
-#  Irssi::print "Authing: $hash";
-
-  $secpass = Irssi::settings_get_str('auth_secpass');
-  $authkey = Irssi::settings_get_str('auth_authkey');
-  $botdump = $hash . $secpass . $authkey ;
-  return md5_hex(encode_utf8($botdump));
-}
-
-#this must handle both auth. and -Auth
-Irssi::signal_add "message private", sub {
-    my ($server, $text, $nick, $address, $target) = @_;
-    my ($msg, $data, $password);
-    my (@servers) = Irssi::servers();
-
-    if ($msg =~ /^\255\251\001/) {
-      $msg = substr($text,3);
-    } else {
-      $msg = $text;
+    my ($data, $server, $witem) = @_;
+    if (!$data || $data !~ /^\-Auth\s+(\S+)/) {
+        IRC::print("Usage: /auth -Auth <challenge>");
+        return;
     }
+    my $result = compute_auth_hash($1);
+    IRC::print("+Auth $result") if $result;
+}
 
-#    if ($nick =~ /^\(/) { #this is a psybnc dcc chat.
-#    } else { #normal msg
-#      $password = Irssi::settings_get_str('auth_password');
-#      if ($msg =~ /^auth\./) { #msg back password
-#        send auth $password;
-#      }
-#    }
 
-    if ($msg =~ /^\-Auth/) {
-      $server = $servers[0];
-      my $cmd = "/MSG $nick +Auth " . auth($msg);
-      $server->command("$cmd");
-    }  
-};
+sub show_auth {
+    my $secpass = get_setting('auth_secpass', '(not set)');
+    my $authkey = get_setting('auth_authkey', '(not set)');
+    my $password = get_setting('auth_password', '(not set)');
+    my $algo    = get_setting('auth_hash_algorithm', 'sha256');
 
-#this must handle -Auth
-Irssi::signal_add "dcc chat message", sub {
-  my ($dcc, $text) = @_;
-  my ($msg,$data);
-    my (@servers) = Irssi::servers();
-  if ($msg =~ /^\255\251\001/) {
-    $msg = substr($text,3);
-  } else {
-    $msg = $text;
-  }
+    IRC::print('=== Wraith Auth Settings ===');
+    IRC::print("  Password:  $password");
+    IRC::print("  SecPass:   $secpass");
+    IRC::print("  AuthKey:   $authkey");
+    IRC::print("  Algorithm: $algo");
+}
 
-  if ($msg =~ /^\-Auth/) {
-#    my $cmd = "/MSG =". $dcc->{nick} . " +Auth ". auth($msg);
-    $server = $servers[0];
-    my $cmd = "+Auth ". auth($msg);
-    $server->command("/MSG =". $dcc->{nick} . " ". $cmd);
-#    $dcc->send("$cmd");
-#    send +Auth auth($msg);
-  }
-  
-};
 
-#Irssi::settings_add_str('auth', 'auth_password', '');
-Irssi::settings_add_str('auth', 'auth_secpass', '');
-Irssi::settings_add_str('auth', 'auth_authkey', '');
+sub on_privmsg {
+    my ($data) = @_;
+    return unless $data =~ /^:(\S+?)!\S+ PRIVMSG (\S+) :(.+)$/;
+    my ($nick, $target, $text) = ($1, $2, $3);
+    return if $target =~ /^[#&]/;  # skip channels
 
-Irssi::command_bind("auth", "cmd_auth");
-Irssi::print "Wraith authorization script by bryan loaded.";
+    $text =~ s/^\xff\xf9\x01//;
+
+    if ($text =~ /^auth\./ || $text =~ /^auth!/) {
+        my $password = get_setting('auth_password', '');
+        if ($password) {
+            IRC::command("MSG $nick auth $password");
+        }
+    } elsif ($text =~ /^\-Auth\s+(\S+)/) {
+        my $challenge = $1;
+        my $result = compute_auth_hash($challenge);
+        if ($result) {
+            IRC::command("MSG $nick +Auth $result");
+        }
+    }
+}
+
+
+IRC::add_command('auth', \&cmd_auth, 'Compute wraith auth hash');
+IRC::add_command('showauth', \&show_auth, 'Show auth settings');
+IRC::hook_server('PRIVMSG', \&on_privmsg);
+
+IRC::print('Wraith authorization script loaded.');

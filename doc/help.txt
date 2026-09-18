@@ -463,7 +463,10 @@ See also: link%{+a}, newhub%{-}
  
    The following can be set + or - (e.g. '%dchanset #channel -enforcebans')
         $bautoop$b         Bots that are +y will auto-op all users with 
-                       op access to the channel.
+                       op access to the channel.  Users with the +O
+                       flag (global or channel-specific) will also be
+                       auto-opped even if +autoop is not set on the
+                       channel, as long as they have +o access.
         $bbackup$b         Make backup-bots (+B) join when set.
         $bbitch$b          Only let users with the +o flag have op on the
                        channel?
@@ -615,10 +618,13 @@ See also: %{-}%{+n}+chan, -chan%{-}%{+m|m}, chanset%{-}
    he is a chanop.  The second "kantSF" is the nickname that the
    bot knows him by.  Sometimes this will differ from the nickname
    a person is using.  The time displayed is the time the user
-   joined the channel.  The next field is the attributes:
+   joined the channel.     The next field is the attributes:
       n - bot owner                      o - can get ops (+o)
       m - bot master or owner            b - another bot
-      d - cannot get ops (+d)
+      d - cannot get ops (+d)            O - autoop (+O)
+      k - auto-kick (+k)                v - voice (+v)
+      x - noflood (+x)                  w - wastoptest (+w)
+      q - quiet (+q)
    The last field is the user@host he is using irc from.
  
 See also: status, whois
@@ -875,6 +881,10 @@ See also: color, echo, login, page, strip
    Otherwise, only the bot it is done on will cycle.
    Delay defaults to 10 seconds, which means bots will part and not rejoin
    until that time has passed.
+   Note: on an invite-only (+i) channel, a bot that has just gained ops will
+   actively pull in the other bots that belong to the channel's groups (via
+   INVITE and a botnet invite-request) rather than waiting for the next
+   minutely check, so a group change converges within seconds.
  
 See also: down
 ::date
@@ -1693,7 +1703,11 @@ See also: reload, backup
 [N]  $bserver-cycle-wait$b   Amount of time in seconds to wait between server reconnections.
 [N]  $bserver-port$b         Default port to use for server connections.
 [N]  $bserver-port-ssl$b     Default port to use for SSL server connections.
-[B]  $bserver-use-ssl$b      Use SSL for IRC server connections?
+[N]  $bserver-use-ssl$b      Use SSL for IRC server connections: 0 = plain TCP
+                         for all bots, 1 = SSL for all bots, 2 = SSL only for
+                         +c (chanhub) bots. Mode 2 is never sent to bots older
+                         than 1.5.x (they only understand 0/1 and would clamp it
+                         to SSL-only); those bots are kept on plain TCP.
 [N]  $bwait-split$b          How long in seconds to track netsplit members.
  
  
@@ -1727,9 +1741,11 @@ See also: reload, backup
 [D]  $bhijack$b              How to handle when a commonly used hijack method attempt is detected. 
  
 [L]  $bservers$b             Comma-separated list of servers the bot will use.
-[L]  $bservers-ssl$b         Comma-separated list of SSL servers to use if server-use-ssl is true.
+[L]  $bservers-ssl$b         Comma-separated list of SSL servers, used when server-use-ssl
+                         enables SSL (1, or 2 for +c bots).
 [L]  $bservers6$b            Comma-separated list of servers the bot will use (FOR IPv6).
-[L]  $bservers6-ssl$b        Comma-separated list of IPv6 SSL servers to use if server-use-ssl is true.
+[L]  $bservers6-ssl$b        Comma-separated list of IPv6 SSL servers, used when server-use-ssl
+                         enables SSL (1, or 2 for +c bots).
  
 [N]  $bmsgburst$b            How many messages to burst at once to server. (Too high will excess flood)
 [N]  $bmsgrate$b             How often (msecs) to dequeue msgs to the server. Only used on
@@ -1866,7 +1882,7 @@ See also: slowpart, chanset, chaninfo
    memory being used by the userfile. The second line tells you the uptime of
    the bot, CPU time, and cache hit. The third shows the bot's admin, and the
    forth shows its current config file. The fifth line shows what operating
-   system the bot is running on. The next two lines show Tcl information. If
+   system the bot is running on. The next two lines show information. If
    debug mode is enabled, additional info may be shown. Sharing information
    will also be shown if it's being used.
  
@@ -1932,9 +1948,6 @@ See also: die, conf, botcmd
     -Users will not see channels that are +s or +p unless they have op access there
  
 See also: find
-::tcl
-###  $btcl$b script
-   Executes the given string and returns the result.
 :leaf:topic
 ###  $btopic$b [channel] [new topic]
    Changes the channel's topic, assuming the bot is a chanop or the
@@ -2148,4 +2161,17 @@ See also: match, who, whom%{+m|m}, chattr, chaninfo%{-}
    channels will be shown.
  
 See also: who, chat%{+m}, bots%{-}
+::tz
+###  $btz$b [UTC+N / UTC-N / UTC+N:M / UTC]
+   Sets your timezone for partyline timestamps. Without arguments,
+   shows your current timezone.
+   Examples: .tz UTC+1, .tz UTC-5:30, .tz UTC
+   Setting is saved with your console settings.
+ 
+See also: time, store
+::time
+###  $btime$b
+   Shows your current timezone setting. Use '.tz' to change it.
+ 
+See also: tz
 ::end
