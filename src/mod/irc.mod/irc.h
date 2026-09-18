@@ -7,6 +7,14 @@
 #define _EGG_MOD_IRC_IRC_H
 
 #include "src/chanprog.h"
+#include "module.h"
+
+class IrcModule : public wraith::Module {
+public:
+  void init() override;
+  const char *name() const override { return "irc"; }
+  static IrcModule& instance() { static IrcModule module; return module; }
+};
 
 enum { BC_NOCOOKIE = 1, BC_SLACK, BC_HASH, BC_COUNTER };
 
@@ -65,17 +73,17 @@ static cache_t *cache_new(char *);
 static void cache_del(char *, cache_t *);
 static void cache_debug(void);
 #endif /* CACHE */
-static void cache_invite(struct chanset_t *, const char *, const char *, const char *, bool, bool);
+void cache_invite(struct chanset_t *, const char *, const char *, const char *, bool, bool);
 
 //static char *makecookie(const char *, const memberlist*, const memberlist*, const memberlist* = NULL, const memberlist* = NULL);
 void makecookie(char*, size_t, const char *, const memberlist*, const memberlist*, const memberlist* = NULL, const memberlist* = NULL);
-static int checkcookie(const char*, const memberlist*, const memberlist*, const char*, int);
+int checkcookie(const char*, const memberlist*, const memberlist*, const char*, int);
 extern void counter_clear(const char*);
-static char *getchanmode(struct chanset_t *);
-static void flush_mode(struct chanset_t *, int);
-static bool member_getuser(memberlist* m, bool act_on_lookup = 0);
-static void do_protect(struct chanset_t* chan, const char* reason);
-static void rebalance_roles_chan(struct chanset_t* chan);
+char *getchanmode(struct chanset_t *);
+void flush_mode(struct chanset_t *, int);
+bool member_getuser(memberlist* m, bool act_on_lookup = 0);
+void do_protect(struct chanset_t* chan, const char* reason);
+void rebalance_roles_chan(struct chanset_t* chan);
 
 /* reset(bans|exempts|invites) are now just macros that call resetmasks
  * in order to reduce the code duplication. <cybah>
@@ -84,22 +92,22 @@ static void rebalance_roles_chan(struct chanset_t* chan);
 #define resetexempts(chan)  resetmasks((chan), (chan)->channel.exempt, (chan)->exempts, global_exempts, 'e')
 #define resetinvites(chan)  resetmasks((chan), (chan)->channel.invite, (chan)->invites, global_invites, 'I')
 
-static int detect_offense(memberlist*, struct chanset_t *, char *);
+int detect_offense(memberlist*, struct chanset_t *, char *);
 /* static int target_priority(struct chanset_t *, memberlist *, int); */
-static bool do_op(memberlist *, struct chanset_t *, bool, bool);
-static void request_op(struct chanset_t *);
-static void request_in(struct chanset_t *);
-static bool detect_chan_flood(memberlist *m, const char* from, struct chanset_t *chan, flood_t which, const char *msg = NULL);
-static bool new_mask(masklist *, const char *, const char *);
-static void do_closed_kick(struct chanset_t *, memberlist *);
-static char *quickban(struct chanset_t *, const char *);
-static bool killmember(struct chanset_t *chan, const char *nick, bool cacheMember = true);
-static void member_update_from_cache(struct chanset_t* chan, memberlist *m);
-static void check_lonely_channel(struct chanset_t *chan);
-static int gotmode(char *, char *);
+bool do_op(memberlist *, struct chanset_t *, bool, bool);
+void op_fanout(struct chanset_t *, bool allow_burst = false);
+void request_op(struct chanset_t *);
+void request_in(struct chanset_t *);
+bool detect_chan_flood(memberlist *m, const char* from, struct chanset_t *chan, flood_t which, const char *msg = NULL);
+bool new_mask(masklist *, const char *, const char *);
+char *quickban(struct chanset_t *, const char *);
+bool killmember(struct chanset_t *chan, const char *nick, bool cacheMember = true);
+void member_update_from_cache(struct chanset_t* chan, memberlist *m);
+void check_lonely_channel(struct chanset_t *chan);
+int gotmode(char *, char *);
 void unset_im(struct chanset_t* chan);
 void lockdown_chan(struct chanset_t* chan, flood_reason_t reason, const char* flood_type = NULL);
-static void send_chan_who(int queue, struct chanset_t* chan, bool chain = 0);
+void send_chan_who(int queue, struct chanset_t* chan, bool chain = 0);
 #define newban(chan, mask, who)         new_mask((chan)->channel.ban, mask, who)
 #define newexempt(chan, mask, who)      new_mask((chan)->channel.exempt, mask, who)
 #define newinvite(chan, mask, who)      new_mask((chan)->channel.invite, mask, who)
@@ -107,12 +115,15 @@ void resolve_to_member(struct chanset_t *chan, const char *nick, const char *hos
 
 typedef struct resolvstruct resolv_member;
 void resolve_to_rbl(struct chanset_t *chan, const char *host, struct resolvstruct *r = NULL);
-static void do_mask(struct chanset_t *chan, masklist *m, char *mask, char Mode);
-static void get_channel_masks(struct chanset_t* chan);
+void do_mask(struct chanset_t *chan, masklist *m, char *mask, char Mode);
+void get_channel_masks(struct chanset_t* chan);
 const char* punish_flooder(struct chanset_t* chan, memberlist* m, const char *reason = NULL);
 void set_devoice(struct chanset_t* chan, memberlist* m);
 
 #endif /* MAKING_IRC */
+
+/* Also used from channels.mod (invite retry), so declared outside MAKING_IRC. */
+void request_in(struct chanset_t *);
 
 void my_setkey(struct chanset_t *, const char *);
 void force_join_chan(struct chanset_t* chan, int idx = DP_MODE);
@@ -169,10 +180,28 @@ void reset_chan_info(struct chanset_t *);
 char *getnick(const char *, struct chanset_t *);
 void check_shouldjoin(struct chanset_t* chan);
 void delete_member(memberlist* m);
+void store_pending_cookie(struct chanset_t *chan, memberlist *opper,
+    memberlist *opped, const char *cookie, int indexHint);
+void retry_pending_cookies_for_nick(struct chanset_t *chan, const char *nick);
+void cleanup_expired_cookies(void);
 
 extern int		max_bans, max_exempts, max_invites, max_modes;
 extern bool		use_354, include_lk;
 extern unsigned int	modesperline;
 extern unsigned long my_cookie_counter;
+
+/* The cookie format carries at most 3 opped nicks (1/2/3 hashes). */
+#define COOKIE_MAX_NICKS 3
+
+/* Number of queued cookie ops that fit in one MODE line. */
+static inline unsigned int
+cookie_queue_capacity(void)
+{
+  if (!modesperline)
+    return 0;                   /* Haven't received 005 yet */
+
+  unsigned int n = modesperline - 1;    /* leave room for -b */
+  return n < COOKIE_MAX_NICKS ? n : COOKIE_MAX_NICKS;
+}
 #endif				/* _EGG_MOD_IRC_IRC_H */
 

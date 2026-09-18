@@ -25,46 +25,25 @@
  */
 
 
-#include "src/common.h"
-#define MAKING_IRC
-#include "irc.h"
-#include "src/adns.h"
-#include "src/match.h"
-#include "src/settings.h"
-#include "src/base64.h"
-#include "src/tandem.h"
-#include "src/net.h"
-#include "src/botnet.h"
-#include "src/botmsg.h"
-#include "src/main.h"
-#include "src/response.h"
-#include "src/set.h"
-#include "src/userrec.h"
-#include "src/misc.h"
-#include "src/rfc1459.h"
-#include "src/socket.h"
-#include "src/adns.h"
-#include "src/chanprog.h"
-#include "src/auth.h"
-#include "src/userrec.h"
-#include "src/binds.h"
-#include "src/userent.h"
-#include "src/egg_timer.h"
-#include "src/mod/share.mod/share.h"
-#include "src/mod/server.mod/server.h"
-#include "src/mod/channels.mod/channels.h"
-#include "src/mod/ctcp.mod/ctcp.h"
-#include <algorithm>
-using std::swap;
-#include <bdlib/src/String.h>
-#include <bdlib/src/HashTable.h>
-#include <bdlib/src/base64.h>
-#include <deque>
-#include <vector>
+#include "irc_shared.h"
 
-#include <stdarg.h>
+namespace {
 
-#include <math.h>
+class HostmaskCheck {
+public:
+  void tick()
+  {
+    if (cnt_++ == 10) {
+      check_hostmask();
+      cnt_ = 0;
+    }
+  }
+
+private:
+  int cnt_ = 10;
+};
+
+} /* anonymous namespace */
 
 #define PRIO_DEOP 1
 #define PRIO_KICK 2
@@ -79,26 +58,26 @@ int max_bans;                   /* Modified by net-type 1-4 */
 int max_exempts;
 int max_invites;
 int max_modes;                  /* Modified by net-type 1-4 */
-static bool bounce_bans = 0;
-static bool bounce_exempts = 0;
-static bool bounce_invites = 0;
-static bool bounce_modes = 0;
+bool bounce_bans = 0;
+bool bounce_exempts = 0;
+bool bounce_invites = 0;
+bool bounce_modes = 0;
 unsigned int modesperline;      /* Number of modes per line to send. */
-static size_t mode_buf_len = 200;  /* Maximum bytes to send in 1 mode. */
+size_t mode_buf_len = 200;  /* Maximum bytes to send in 1 mode. */
 bool use_354 = 0;                /* Use ircu's short 354 /who
                                  * responses. */
-static bool kick_fun = 0;
-static bool ban_fun = 1;
-static bool prevent_mixing = 1;  /* To prevent mixing old/new modes */
+bool kick_fun = 0;
+bool ban_fun = 1;
+bool prevent_mixing = 1;  /* To prevent mixing old/new modes */
 bool include_lk = 1;      /* For correct calculation
                                  * in real_add_mode. */
 static bd::HashTable<bd::String, unsigned long> bot_counters;
 unsigned long my_cookie_counter = 0;
 
-static std::deque<bd::String> chained_who;
-static int chained_who_idx;
+std::deque<bd::String> chained_who;
+int chained_who_idx;
 
-static int
+int
 voice_ok(memberlist *m, struct chanset_t *chan)
 {
   if (m->flags & EVOICE)
@@ -110,12 +89,7 @@ voice_ok(memberlist *m, struct chanset_t *chan)
   return 1;
 }
 
-#include "chan.cc"
-#include "mode.cc"
-#include "cmdsirc.cc"
-#include "msgcmds.cc"
-
-static int
+int
 detect_offense(memberlist* m, struct chanset_t *chan, char *msg)
 {
   if (!chan || !msg
@@ -220,7 +194,7 @@ const char* punish_flooder(struct chanset_t* chan, memberlist* m, const char *re
     }
   } else {
     if (!chan_sentkick(m)) {
-      dprintf(DP_SERVER, "KICK %s %s :%s%s\n", chan->name, m->nick, kickprefix, reason ? reason : response(RES_FLOOD));
+      dprintf(DP_SERVER, "KICK %s %s :%s%s\n", chan->name, m->nick, CtcpModule::kickprefix(), reason ? reason : response(RES_FLOOD));
       m->flags |= SENTKICK;
       return "kicking";
     } else {
@@ -392,7 +366,7 @@ static void cache_debug(void)
 }
 #endif /* CACHE */
 
-static void cache_invite(struct chanset_t *chan, const char *nick,
+void cache_invite(struct chanset_t *chan, const char *nick,
     const char *host, const char *handle, bool op, bool bot)
 {
 #ifdef CACHE
@@ -517,7 +491,7 @@ if (hash3) sdprintf("hash3: %s", hash3);
 #endif
 
   if (m3)
-    simple_snprintf(out, len + 1, STR("%c%c%c%c%c%c%c%c%c!%s@%s"), 
+    simple_snprintf(out, len, STR("%c%c%c%c%c%c%c%c%c!%s@%s"), 
                          hash1[HASH_INDEX1(0)], 
                          hash1[HASH_INDEX2(0)], 
                          hash1[HASH_INDEX3(0)], 
@@ -530,7 +504,7 @@ if (hash3) sdprintf("hash3: %s", hash3);
                          randstring, 
                          cookie.c_str());
   else if (m2)
-    simple_snprintf(out, len + 1, STR("%c%c%c%c%c%c!%s@%s"), 
+    simple_snprintf(out, len, STR("%c%c%c%c%c%c!%s@%s"), 
                          hash1[HASH_INDEX1(0)], 
                          hash1[HASH_INDEX2(0)], 
                          hash1[HASH_INDEX3(0)], 
@@ -540,7 +514,7 @@ if (hash3) sdprintf("hash3: %s", hash3);
                          randstring, 
                          cookie.c_str());
   else
-    simple_snprintf(out, len + 1, STR("%c%c%c!%s@%s"), 
+    simple_snprintf(out, len, STR("%c%c%c!%s@%s"), 
                          hash1[HASH_INDEX1(0)], 
                          hash1[HASH_INDEX2(0)], 
                          hash1[HASH_INDEX3(0)], 
@@ -556,7 +530,7 @@ void counter_clear(const char* botnick) {
   bot_counters[botnick] = 0;
 }
 
-static inline int checkcookie(const char *chname, const memberlist* opper, const memberlist* opped, const char *cookie, int indexHint) {
+int checkcookie(const char *chname, const memberlist* opper, const memberlist* opped, const char *cookie, int indexHint) {
 #define HOST(_x) (6 + (_x) + ((hashes << 1) + hashes)) /* x + (hashes * 3) */
 #define SALT(_x) (1 + (_x) + ((hashes << 1) + hashes)) /* x + (hashes * 3) */
   /* How many hashes are in the cookie? */
@@ -595,23 +569,10 @@ if (indexHint == 0) {
 }
 #endif
 
-  const time_t optime = atol(ts);
-  if ((((now + timesync) % 10000000) - optime) > 3900)
-    return BC_SLACK;
-
-  //Only check on the first cookie
-  if (indexHint == 0 && conf.bot->u != opper->user) {
-    if (counter <= last_counter)
-      return BC_COUNTER;
-
-    // graceful overflow
-    if (counter > (unsigned long)(-1000))
-      counter = 0;
-
-    //Update counter for the opper
-    bot_counters[handle] = counter;
-  }
-
+  /* Hash check runs BEFORE time check. If the key is wrong (stale
+   * opper->userhost), decryption produces garbage and atol() on garbage
+   * gives a random timestamp, causing BC_SLACK. Checking the hash first
+   * ensures wrong keys are caught as BC_HASH instead. */
   const char *hash = cookie_hash(chname, opper, opped, &ts[1], randstring, key);
 #ifdef DEBUG
 sdprintf("hash: %s", hash);
@@ -627,6 +588,24 @@ sdprintf("hash: %s", hash);
     if ((hash[HASH_INDEX1(i)] == cookie_index[0] && 
          hash[HASH_INDEX2(i)] == cookie_index[1] && 
          hash[HASH_INDEX3(i)] == cookie_index[2])) {
+      /* Hash matched -- now check time */
+      const time_t optime = atol(ts);
+      if ((((now + timesync) % 10000000) - optime) > 180)
+        return BC_SLACK;
+
+      //Only check on the first cookie
+      if (indexHint == 0 && conf.bot->u != opper->user) {
+        if (counter <= last_counter)
+          return BC_COUNTER;
+
+        // graceful overflow
+        if (counter > (unsigned long)(-1000))
+          counter = 0;
+
+        //Update counter for the opper
+        bot_counters[handle] = counter;
+      }
+
       return 0;
     }
   }
@@ -655,6 +634,17 @@ getin_request(char *botnick, char *code, char *par)
 
   if (unlikely(!chname[0] || !chname))
     return;
+
+  /* 'r' (invite pull): a bot that just gained ops asks the bots that should
+   * be here to (re)send their invite request. This is checked before the
+   * nick field below, which is what makes it harmless to send to old bots
+   * (they hit the empty-nick return right after this). */
+  if (what[0] == 'r') {
+    struct chanset_t *c = findchan_by_dname(chname);
+    if (c && shouldjoin(c) && !channel_active(c) && !channel_pending(c))
+      request_in(c);
+    return;
+  }
 
   char *tmp = newsplit(&par);		/* nick */
 
@@ -693,7 +683,7 @@ getin_request(char *botnick, char *code, char *par)
 
   memberlist* mem = ismember(chan, nick);
 
-  if (mem && chan_issplit(mem)) {
+  if (mem && chan_issplit(mem) && what[0] != 'i') {
     putlog(LOG_GETIN, "*", "%sreq from %s/%s %s %s - %s is split", type, botnick, nick, desc, chan->dname, nick);
     return;
   }
@@ -783,7 +773,7 @@ getin_request(char *botnick, char *code, char *par)
 
     putlog(LOG_GETIN, "*", "opreq from %s/%s on %s - Opped", botnick, nick, chan->dname);
   } else if (what[0] == 'i') {
-    if (mem) {
+    if (mem && !chan_issplit(mem)) {
       putlog(LOG_GETIN, "*", "inreq from %s/%s for %s - %s is already on %s", botnick, nick, chan->dname, nick, chan->dname);
       return;
     }
@@ -919,7 +909,7 @@ getin_request(char *botnick, char *code, char *par)
   }
 }
 
-static void
+void
 request_op(struct chanset_t *chan)
 {
   if (!chan) {
@@ -946,11 +936,8 @@ request_op(struct chanset_t *chan)
   }
 
   /* Check if my hostmask is recognized (every 10th time) */
-  static int check_hostmask_cnt = 10;
-  if (check_hostmask_cnt++ == 10) {
-    check_hostmask();
-    check_hostmask_cnt = 0;
-  }
+  static HostmaskCheck hostmask_check;
+  hostmask_check.tick();
 
   struct flag_record fr = { FR_GLOBAL | FR_CHAN | FR_BOT, 0, 0, 0 };
 
@@ -1073,7 +1060,7 @@ request_op(struct chanset_t *chan)
   putlog(LOG_GETIN, "*", "Requested ops on %s from %s", chan->dname, l);
 }
 
-static void
+void
 request_in(struct chanset_t *chan)
 {
   /* Lag situation */
@@ -1081,11 +1068,8 @@ request_in(struct chanset_t *chan)
     return;
 
   /* Check if my hostmask is recognized (every 10th time) */
-  static int check_hostmask_cnt = 10;
-  if (check_hostmask_cnt++ == 10) {
-    check_hostmask();
-    check_hostmask_cnt = 0;
-  }
+  static HostmaskCheck hostmask_check;
+  hostmask_check.tick();
 
   struct flag_record fr = { FR_GLOBAL | FR_CHAN | FR_BOT, 0, 0, 0 };
 
@@ -1118,6 +1102,19 @@ request_in(struct chanset_t *chan)
   bd::String request(bd::String::printf("gi i %s %s %s!%s %s %s", chan->dname, botname, botname, botuserhost, botuserip, chan->channel.key[0] ? chan->channel.key : ""));
   putallbots(request.c_str());
   putlog(LOG_GETIN, "*", "Requested help to join %s", chan->dname);
+
+  /* Re-request soon instead of waiting for the 60s minutely check, but only
+   * a bounded burst so a permanently uninvitable channel doesn't spam the
+   * botnet. channels_timers() fires this on the 10s tick. */
+  static const int delays[] = {5, 10, 20, 30, 30, 30};
+  const int ct = chan->channel.invite_retry_ct;
+
+  if (ct < (int)(sizeof(delays) / sizeof(delays[0]))) {
+    chan->channel.invite_retry = now + delays[ct];
+    chan->channel.invite_retry_ct = ct + 1;
+  } else {
+    chan->channel.invite_retry = 0;
+  }
 }
 
 /* Set the key.
@@ -1132,7 +1129,7 @@ my_setkey(struct chanset_t *chan, const char *k)
 /* Adds a ban, exempt or invite mask to the list
  * m should be chan->channel.(exempt|invite|ban)
  */
-static bool
+bool
 new_mask(masklist *m, const char *s, const char *who)
 {
   for (; m && m->mask[0] && rfc_casecmp(m->mask, s); m = m->next) ;
@@ -1151,7 +1148,7 @@ new_mask(masklist *m, const char *s, const char *who)
 
 /* Removes a nick from the channel member list (returns 1 if successful)
  */
-static bool
+bool
 killmember(struct chanset_t *chan, const char *nick, bool cacheMember)
 {
   memberlist *x = NULL, *old = NULL;
@@ -1206,7 +1203,7 @@ killmember(struct chanset_t *chan, const char *nick, bool cacheMember)
 /**
  * Update the member with cached information from a parted/quitted member
  */
-static void member_update_from_cache(struct chanset_t* chan, memberlist *m) {
+void member_update_from_cache(struct chanset_t* chan, memberlist *m) {
   // Are they in the cache?
   const bd::String userhost(m->userhost);
   if (chan->channel.cached_members->contains(userhost)) {
@@ -1259,7 +1256,7 @@ any_ops(struct chanset_t *chan)
   return 1;
 }
 
-static void get_channel_masks(struct chanset_t* chan) {
+void get_channel_masks(struct chanset_t* chan) {
   bd::String tocheck(size_t(4));
   if (!(chan->ircnet_status & CHAN_ASKEDBANS)) {
     chan->ircnet_status |= CHAN_ASKEDBANS;
@@ -1320,10 +1317,10 @@ reset_chan_info(struct chanset_t *chan)
   }
 }
 
-static void send_chan_who(int queue, struct chanset_t *chan, bool chain) {
+void send_chan_who(int queue, struct chanset_t *chan, bool chain) {
   if (chain) {
     if (std::find(std::begin(chained_who), std::end(chained_who),
-          chan->name) != std::end(chained_who))
+          chan->name) == std::end(chained_who))
       chained_who.push_back(chan->name);
     chained_who_idx = queue;
     if (chained_who.size() > 1)
@@ -1354,57 +1351,64 @@ void join_chan(struct chanset_t* chan, int idx) {
  * might as well leave and rejoin. If i'm NOT the only person
  * on the channel, but i'm still not op'd, demand ops.
  */
-static void
+void
 check_lonely_channel(struct chanset_t *chan)
 {
   if (channel_pending(chan) || !channel_active(chan) || me_op(chan) ||
       !shouldjoin(chan) || (chan->channel.mode & CHANANON))
     return;
 
-  static int whined = 0;
-
   if ((chan->channel.members - chan->channel.splitmembers) == 1 && channel_cycle(chan) && !channel_stop_cycle(chan)) {
     if (chan->name[0] != '+') { /* Its pointless to cycle + chans for ops */
       putlog(LOG_MISC, "*", "Trying to cycle %s to regain ops.", chan->dname);
       dprintf(DP_MODE, "PART %s\n", chan->name);
       // Will auto rejoin once the bot PARTs
-      whined = 0;
+      chan->channel.lonely_whined = 0;
     }
   } else if (any_ops(chan)) {
-    whined = 0;
+    chan->channel.lonely_whined = 0;
   } else {
     /* Other people here, but none are ops. If there are other bots make
      * them LEAVE!
      */
-    if (!whined) {
+    if (!chan->channel.lonely_whined) {
       /* + is opless. Complaining about no ops when without special
        * help(services), we cant get them - Raist
        */
       if (chan->name[0] != '+')
         putlog(LOG_MISC, "*", "%s is active but has no ops :(", chan->dname);
-      whined = 1;
+      chan->channel.lonely_whined = 1;
     }
-#ifdef disabled
-    memberlist *m = NULL;
-    bool ok = 1;
+    /* If ALL members are bots and +cycle is set, coordinate a
+     * synchronised cycle via botnet. All bots part together but
+     * rejoin at staggered intervals so the first to rejoin gets ops. */
+    if (channel_cycle(chan) && chan->name[0] != '+') {
+      memberlist *m = NULL;
+      bool all_bots = 1;
 
-    for (m = chan->channel.member; m && m->nick[0]; m = m->next) {
-      member_getuser(m, 0);
-
-      if (!m->is_me && (!m->user || !m->user->bot)) {
-        ok = 0;
-        break;
+      for (m = chan->channel.member; m && m->nick[0]; m = m->next) {
+        if (m->is_me || m->split)
+          continue;
+        member_getuser(m, 0);
+        if (!m->user || !m->user->bot) {
+          all_bots = 0;
+          break;
+        }
+      }
+      if (all_bots) {
+        char cycle_msg[120];
+        simple_snprintf(cycle_msg, sizeof(cycle_msg), "cycle %s", chan->dname);
+        putallbots(cycle_msg);
+        /* Also cycle self */
+        do_chanset(NULL, chan, "+inactive", DO_LOCAL);
+        dprintf(DP_SERVER, "PART %s\n", chan->name);
+        unsigned int nick_hash = 0;
+        for (const char *p = conf.bot->nick; *p; p++)
+          nick_hash = nick_hash * 31 + (unsigned char)*p;
+        chan->channel.jointime = ((now + (nick_hash % 26) + 5) - server_lag);
+        chan->channel.lonely_whined = 0;
       }
     }
-    if (ok && channel_cycle(chan)) {
-      /* ALL bots!  make them LEAVE!!! */
-/*
-      for (m = chan->channel.member; m && m->nick[0]; m = m->next)
-	if (!m->is_me)
-	  dprintf(DP_SERVER, "PRIVMSG %s :go %s\n", m->nick, chan->dname);
-*/
-    }
-#endif
   }
 }
 
@@ -1417,19 +1421,21 @@ warn_pls_take(struct chanset_t *chan)
 }
 
 /* FIXME: max sendq will occur. */
-static void
+static bool
 check_servers(struct chanset_t *chan)
 {
   for (memberlist *m = chan->channel.member; m && m->nick[0]; m = m->next) {
-    if (!m->is_me && chan_hasop(m) && (m->hops == -1)) {
+    member_getuser(m);
+    if (!m->is_me && is_bot(m->user) && chan_hasop(m) && (m->hops == -1)) {
       putlog(LOG_DEBUG, "*", "Updating WHO for '%s' because '%s' is missing data.", chan->dname, m->nick);
       send_chan_who(DP_HELP, chan);
-      break;                    /* lets just do one chan at a time to save from flooding */
+      return true;
     }
   }
+  return false;
 }
 
-static void do_protect(struct chanset_t* chan, const char* reason) {
+void do_protect(struct chanset_t* chan, const char* reason) {
   // Don't bother with these if already botbitch, already processed it, or it's a hacked bot and +botbitch won't help.
   if (!channel_botbitch(chan)) {
     if (chan->protect_backup) {
@@ -1495,10 +1501,42 @@ raise_limit(struct chanset_t *chan, int default_limitraise)
 void check_shouldjoin(struct chanset_t* chan)
 {
   if ((channel_active(chan) || channel_pending(chan)) && !shouldjoin(chan)) {
-    sdprintf("Active/Pending in %s but I shouldn't be there, parting...", chan->dname);
-    dprintf(DP_SERVER, "PART %s\n", chan->name[0] ? chan->name : chan->dname);
+    if (!chan->channel.groupchange_op_sent) {
+      /* Op any bots that are allowed to have op before we leave, so the channel
+       * doesn't lose all ops when we part. Don't require bot_shouldjoin() here:
+       * the new-group bots may have joined before their groups variable has been
+       * synced to this bot, and the only bots joining while we are parting are
+       * the replacement-group bots anyway. */
+      if (me_op(chan)) {
+        struct flag_record fr = { FR_CHAN|FR_GLOBAL|FR_BOT, 0, 0, 0 };
+        for (memberlist *m = chan->channel.member; m && m->nick[0]; m = m->next) {
+          if (m->is_me || m->split || !member_getuser(m) || !is_bot(m->user))
+            continue;
+          get_user_flagrec(m->user, &fr, chan->dname, chan);
+          if (chk_op(fr, chan))
+            do_op(m, chan, 0, 0);
+        }
+        flush_mode(chan, QUICK);
+      }
+      chan->channel.groupchange_op_sent = now;
+      {
+        char go_msg[120];
+        simple_snprintf(go_msg, sizeof(go_msg), "go %s", chan->dname);
+        putallbots(go_msg);
+      }
+      sdprintf("Active/Pending in %s but I shouldn't be there, parting in 5s...", chan->dname);
+      chan->channel.parttime = now + 5;
+    }
   } else if (shouldjoin(chan)) {
     join_chan(chan);
+  } else if (channel_inactive(chan)) {
+    /* Channel is +inactive but bot's group now matches — clear inactive and join */
+    struct flag_record fr = { FR_CHAN|FR_GLOBAL|FR_BOT, 0, 0, 0 };
+    get_user_flagrec(conf.bot->u, &fr, chan->dname, chan);
+    if (bot_shouldjoin(conf.bot->u, &fr, chan, true)) {
+      chan->status &= ~CHAN_INACTIVE;
+      join_chan(chan);
+    }
   }
 }
 
@@ -1572,8 +1610,8 @@ check_expired_chanstuff(struct chanset_t *chan)
           putlog(LOG_JOIN, chan->dname, "%s (%s) got lost in the net-split.", m->nick, m->userhost);
           --(chan->channel.splitmembers);
           killmember(chan, m->nick, false);
-          continue;
         }
+        continue;
       }
 
       //This bot is set +r, so resolve.
@@ -1659,11 +1697,12 @@ irc_minutely()
     if (server_online) {
       if (!channel_pending(chan)) {
         check_netfight(chan);
-        check_servers(chan);
+        if (check_servers(chan)) break;
       }
       check_expired_chanstuff(chan);
     }
   }
+  cleanup_expired_cookies();
 }
 
 
@@ -1764,7 +1803,7 @@ static void bot_release_nick (char *botnick, char *code, char *par) {
   release_nick(par);
 }
 
-static void rebalance_roles_chan(struct chanset_t* chan)
+void rebalance_roles_chan(struct chanset_t* chan)
 {
   /* Compare to tand_updates which ensures a trigger on unlink/link. */
   if (chan->role_rebalance_cookie == tand_updates) {
@@ -1889,7 +1928,7 @@ static cmd_t irc_bot[] = {
 };
 
 void
-irc_init()
+IrcModule::init()
 {
   timer_create_secs(60, "irc_minutely", (Function) irc_minutely);
   timer_create_secs(10, "rebalance_roles", (Function) rebalance_roles);

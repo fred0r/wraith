@@ -24,6 +24,8 @@
  *
  */
 
+#include "irc_shared.h"
+
 #include <bdlib/src/Stream.h>
 #include <bdlib/src/String.h>
 #include <algorithm>
@@ -62,12 +64,12 @@ static struct chanset_t *get_channel(int idx, const char *chname, bool check_con
  */
 static int has_op(int idx, struct chanset_t *chan)
 {
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
-  if (privchan(user, chan, PRIV_OP)) {
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
+  if (privchan(irc_user, chan, PRIV_OP)) {
     dprintf(idx, "No such channel.\n");
     return 0;
   }
-  if (real_chk_op(user, chan, 0))
+  if (real_chk_op(irc_user, chan, 0))
     return 1;
   dprintf(idx, "You are not a channel op on %s.\n", chan->dname);
   return 0;
@@ -113,7 +115,7 @@ static void cmd_act(int idx, char *par)
     return;
   }
 
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
   if ((chan->channel.mode & CHANMODER) && !me_op(chan) && !me_voice(chan)) {
     dprintf(idx, "Cannot say to %s: It is moderated.\n", chan->dname);
@@ -184,7 +186,7 @@ static void cmd_say(int idx, char *par)
     return;
   }
 
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
   if ((chan->channel.mode & CHANMODER) && !me_op(chan) && !me_voice(chan)) {
     dprintf(idx, "Cannot say to %s: It is moderated.\n", chan->dname);
@@ -257,14 +259,14 @@ static void cmd_kickban(int idx, char *par)
     chan = chanset;
   while (chan) {
 
-    get_user_flagrec(dcc[idx].user, &user, chan->dname);
+    get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
-    if (privchan(user, chan, PRIV_OP)) {
+    if (privchan(irc_user, chan, PRIV_OP)) {
       if (all) goto next;
       dprintf(idx, "No such channel.\n");
       return;
     }
-    else if (!real_chk_op(user, chan, 0)) {
+    else if (!real_chk_op(irc_user, chan, 0)) {
       if (all) goto next;
       dprintf(idx, "You don't have access to %s\n", chan->dname);
       return;
@@ -290,15 +292,15 @@ static void cmd_kickban(int idx, char *par)
     member_getuser(m);
     u = m->user;
     strlcpy(s, m->from, sizeof(s));
-    get_user_flagrec(u, &victim, chan->dname);
+    get_user_flagrec(u, &irc_victim, chan->dname);
   
-    if ((chan_master(victim) || glob_master(victim)) &&
-        !(glob_owner(user) || chan_owner(user))) {
+    if ((chan_master(irc_victim) || glob_master(irc_victim)) &&
+        !(glob_owner(irc_user) || chan_owner(irc_user))) {
       if (all) goto next;
       dprintf(idx, "%s is a %s master.\n", nick, chan->dname);
       return;
     }
-    if (glob_bot(victim)) {
+    if (glob_bot(irc_victim)) {
       if (all) goto next;
       dprintf(idx, "%s is another channel bot!\n", nick);
       return;
@@ -330,7 +332,7 @@ static void cmd_kickban(int idx, char *par)
     }
     if (bantype == '@' || bantype == '-')
       do_mask(chan, chan->channel.ban, s1, 'b');
-    dprintf(DP_MODE, "KICK %s %s :%s%s\n", chan->name, m->nick, bankickprefix, reason);
+    dprintf(DP_MODE, "KICK %s %s :%s%s\n", chan->name, m->nick, CtcpModule::bankickprefix(), reason);
     m->flags |= SENTKICK;
     u_addmask('b', chan, s1, dcc[idx].nick, reason, now + (60 * chan->ban_time), 0);
     dprintf(idx, "Kick-banned %s on %s.\n", nick, chan->dname);
@@ -364,14 +366,14 @@ static void cmd_voice(int idx, char *par)
       dprintf(idx, "Usage: voice <nick> [channel|*]\n");
       return;
     }
-    get_user_flagrec(dcc[idx].user, &user, chan->dname);
+    get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
-    if (privchan(user, chan, PRIV_VOICE)) {
+    if (privchan(irc_user, chan, PRIV_VOICE)) {
       if (all) goto next;
       dprintf(idx, "No such channel.\n");
       return;
     }
-    else if (!chk_voice(NULL, user, chan) && !chk_op(user, chan)) {
+    else if (!chk_voice(NULL, irc_user, chan) && !chk_op(irc_user, chan)) {
       if (all) goto next;
       dprintf(idx, "You don't have access to voice on %s\n", chan->dname);
       return;
@@ -428,14 +430,14 @@ static void cmd_devoice(int idx, char *par)
     dprintf(idx, "Usage: devoice <nick> [channel|*]\n");
     return;
   }
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
-  if (privchan(user, chan, PRIV_VOICE)) {
+  if (privchan(irc_user, chan, PRIV_VOICE)) {
     if (all) goto next;
     dprintf(idx, "No such channel.\n");
     return;
   }
-  else if (!chk_voice(NULL, user, chan) && !chk_op(user, chan)) {
+  else if (!chk_voice(NULL, irc_user, chan) && !chk_op(irc_user, chan)) {
     if (all) goto next;
     dprintf(idx, "You don't have access to devoice on %s\n", chan->dname);
     return;
@@ -494,19 +496,19 @@ static void cmd_op(int idx, char *par)
   putlog(LOG_CMDS, "*", "#%s# (%s) op %s", dcc[idx].nick, all ? "*" : chan->dname, nick);
 
   while (chan) {
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
   if (!nick[0] && !(nick = getnick(dcc[idx].nick, chan))[0]) {
     if (all) goto next;
     dprintf(idx, "Usage: op <nick> [channel|*]\n");
     return;
   }
 
-  if (privchan(user, chan, PRIV_OP)) {
+  if (privchan(irc_user, chan, PRIV_OP)) {
     if (!all)
       dprintf(idx, "No such channel.\n");
     goto next;
   }
-  else if (!chk_op(user, chan)) {
+  else if (!chk_op(irc_user, chan)) {
     if (all) goto next;
     dprintf(idx, "You don't have access to op on %s\n", chan->dname);
     return;
@@ -531,13 +533,13 @@ static void cmd_op(int idx, char *par)
   }
   member_getuser(m);
   u = m->user;
-  get_user_flagrec(u, &victim, chan->dname);
-  if (chk_deop(victim, chan)) {
+  get_user_flagrec(u, &irc_victim, chan->dname);
+  if (chk_deop(irc_victim, chan)) {
     dprintf(idx, "%s is currently being auto-deopped  on %s.\n", m->nick, chan->dname);
     if (all) goto next;
     return;
   }
-  if (chan_bitch(chan) && !chk_op(victim, chan)) {
+  if (chan_bitch(chan) && !chk_op(irc_victim, chan)) {
     dprintf(idx, "%s is not a registered op on %s.\n", m->nick, chan->dname);
     if (all) goto next;
     return;
@@ -645,8 +647,8 @@ static void cmd_mmode(int idx, char *par)
       return;
     }
 
-    get_user_flagrec(dcc[idx].user, &user, chan->dname, chan);
-    if (!glob_owner(user) && !chan_owner(user)) {
+    get_user_flagrec(dcc[idx].user, &irc_user, chan->dname, chan);
+    if (!glob_owner(irc_user) && !chan_owner(irc_user)) {
       dprintf(idx, "You do not have mass mode access for %s\n", chan->dname);
       return;
     }
@@ -672,9 +674,9 @@ static void cmd_mmode(int idx, char *par)
   }
 
   if (mode[0] == '+' && mode[1] == 'o' && !channel_fastop(chan) && !cookies_disabled) {
-    dprintf(idx, STR("Error: This channel is currently set -fastop.\n"));
-    dprintf(idx, STR("Mass opping would result in missing op cookies.\n"));
-    dprintf(idx, STR("Please chanset the channel +fastop first.\n"));
+    dprintf(idx, "%s", STR("Error: This channel is currently set -fastop.\n"));
+    dprintf(idx, "%s", STR("Mass opping would result in missing op cookies.\n"));
+    dprintf(idx, "%s", STR("Please chanset the channel +fastop first.\n"));
     return;
   }
 
@@ -694,14 +696,14 @@ static void cmd_mmode(int idx, char *par)
       } else if (m->is_me)
         continue;
 
-      get_user_flagrec(m->user, &user, chan->dname);
+      get_user_flagrec(m->user, &irc_user, chan->dname);
     }
 
     bool is_target = 0;
 
     if (who[0] == 'o' && (m->flags & CHANOP))
       is_target = 1;
-    else if (who[0] == 'O' && chk_op(user, chan))
+    else if (who[0] == 'O' && chk_op(irc_user, chan))
       is_target = 1;
     else if (who[0] == 'd' && !(m->flags & CHANOP))
       is_target = 1;
@@ -985,17 +987,17 @@ static void cmd_deop(int idx, char *par)
   putlog(LOG_CMDS, "*", "#%s# (%s) deop %s", dcc[idx].nick, all ? "*" : chan->dname, nick);
 
   while (chan) {
-    get_user_flagrec(dcc[idx].user, &user, chan->dname);
+    get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
     if (!nick[0] && !(nick = getnick(dcc[idx].nick, chan))[0]) {
       if (all) goto next;  
       dprintf(idx, "Usage: deop <nick> [channel|*]\n");
       return;
     }
-    if (privchan(user, chan, PRIV_OP)) {
+    if (privchan(irc_user, chan, PRIV_OP)) {
       if (all) goto next;
       dprintf(idx, "No such channel.\n");
     }
-    else if (!real_chk_op(user, chan, 0)) {
+    else if (!real_chk_op(irc_user, chan, 0)) {
       if (all) goto next;
       dprintf(idx, "You don't have access to deop on %s\n", chan->dname);
       return;
@@ -1024,19 +1026,19 @@ static void cmd_deop(int idx, char *par)
     }
     member_getuser(m);
     u = m->user;
-    get_user_flagrec(u, &victim, chan->dname);
+    get_user_flagrec(u, &irc_victim, chan->dname);
 
-    if ((chan_master(victim) || glob_master(victim)) &&
-        !(chan_owner(user) || glob_owner(user))) {
+    if ((chan_master(irc_victim) || glob_master(irc_victim)) &&
+        !(chan_owner(irc_user) || glob_owner(irc_user))) {
       dprintf(idx, "%s is a master for %s.\n", m->nick, chan->dname);
       if (all) goto next;  
       return;
     }
-    if (glob_bot(victim)) {
+    if (glob_bot(irc_victim)) {
       dprintf(idx, "%s is another channel bot!\n", nick);
       return;
     }
-    if (chk_op(victim, chan) && !(chan_master(user) || glob_master(user))) {
+    if (chk_op(irc_victim, chan) && !(chan_master(irc_user) || glob_master(irc_user))) {
       dprintf(idx, "%s has the op flag for %s.\n", m->nick, chan->dname);
       if (all) goto next;  
       return;
@@ -1085,14 +1087,14 @@ static void cmd_kick(int idx, char *par)
   if (all)
     chan = chanset;
   while (chan) {
-    get_user_flagrec(dcc[idx].user, &user, chan->dname);
+    get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
-    if (privchan(user, chan, PRIV_OP)) {
+    if (privchan(irc_user, chan, PRIV_OP)) {
       if (all) goto next;
       dprintf(idx, "No such channel.\n");
       return;
     }
-    else if (!real_chk_op(user, chan, 0)) {
+    else if (!real_chk_op(irc_user, chan, 0)) {
       if (all) goto next;
       dprintf(idx, "You don't have access to kick on %s\n", chan->dname);
       return;
@@ -1117,23 +1119,23 @@ static void cmd_kick(int idx, char *par)
     }
     member_getuser(m);
     u = m->user;
-    get_user_flagrec(u, &victim, chan->dname);
-    if (chk_op(victim, chan) && !(chan_master(user) || glob_master(user))) {
+    get_user_flagrec(u, &irc_victim, chan->dname);
+    if (chk_op(irc_victim, chan) && !(chan_master(irc_user) || glob_master(irc_user))) {
       if (all) goto next;
       dprintf(idx, "%s is a legal op.\n", nick);
       return;
     }
-    if ((chan_master(victim) || glob_master(victim)) &&
-        !(glob_owner(user) || chan_owner(user))) {
+    if ((chan_master(irc_victim) || glob_master(irc_victim)) &&
+        !(glob_owner(irc_user) || chan_owner(irc_user))) {
       if (all) goto next;
       dprintf(idx, "%s is a %s master.\n", nick, chan->dname);
       return;
     }
-    if (glob_bot(victim)) {
+    if (glob_bot(irc_victim)) {
       dprintf(idx, "%s is another channel bot!\n", nick);
       return;
     }
-    dprintf(DP_SERVER, "KICK %s %s :%s%s\n", chan->name, m->nick, kickprefix, reason);
+    dprintf(DP_SERVER, "KICK %s %s :%s%s\n", chan->name, m->nick, CtcpModule::kickprefix(), reason);
     m->flags |= SENTKICK;
     dprintf(idx, "Kicked %s on %s.\n", nick, chan->dname);
     next:;
@@ -1154,13 +1156,13 @@ static void cmd_getkey(int idx, char *par)
 
   putlog(LOG_CMDS, "*", "#%s getkey %s", dcc[idx].nick, par);
 
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
-  if (privchan(user, chan, PRIV_OP)) {
+  if (privchan(irc_user, chan, PRIV_OP)) {
     dprintf(idx, "No such channel.\n");
     return;
   }
-  else if (!real_chk_op(user, chan, 0)) {
+  else if (!real_chk_op(irc_user, chan, 0)) {
     dprintf(idx, "You don't have access for %s\n", chan->dname);
     return;
   }
@@ -1191,8 +1193,8 @@ static void cmd_mop(int idx, char *par)
   struct chanset_t* chan = get_channel(idx, chname, 1, &all);
 
   if (all) {
-    get_user_flagrec(dcc[idx].user, &user, NULL);
-    if (!glob_owner(user)) {
+    get_user_flagrec(dcc[idx].user, &irc_user, NULL);
+    if (!glob_owner(irc_user)) {
       dprintf(idx, "You do not have access to mop '*'\n");
       return;
     }
@@ -1209,13 +1211,13 @@ static void cmd_mop(int idx, char *par)
   memberlist *m = NULL;
 
   while (chan) {
-    get_user_flagrec(dcc[idx].user, &user, chan->dname);
-    if (privchan(user, chan, PRIV_OP)) {
+    get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
+    if (privchan(irc_user, chan, PRIV_OP)) {
       if (all) goto next;
       dprintf(idx, "No such channel.\n");
       return;
     }
-    if (!chk_op(user, chan)) {
+    if (!chk_op(irc_user, chan)) {
       if (all) goto next;
       dprintf(idx, "You are not a channel op on %s.\n", chan->dname);
       return;
@@ -1230,8 +1232,8 @@ static void cmd_mop(int idx, char *par)
         member_getuser(m);
         if (m->user && u_pass_match(m->user, "-"))
           continue;		/* dont op users without a pass */
-        get_user_flagrec(m->user, &victim, chan->dname);
-        if (!chan_hasop(m) && !glob_bot(victim) && chk_op(victim, chan)) {
+        get_user_flagrec(m->user, &irc_victim, chan->dname);
+        if (!chan_hasop(m) && !glob_bot(irc_victim) && chk_op(irc_victim, chan)) {
           found = 1;
           dprintf(idx, "Gave op to '%s' as '%s' on %s\n", m->user->handle, m->nick, chan->dname);
           do_op(m, chan, 0, 0);
@@ -1279,9 +1281,9 @@ static void cmd_find(int idx, char *par)
   /* make a list of members in found[] */
   for (chan = chanset; chan; chan = chan->next) {
 
-    get_user_flagrec(dcc[idx].user, &user, chan->dname);
+    get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
-    if (!privchan(user, chan, PRIV_OP)) {
+    if (!privchan(irc_user, chan, PRIV_OP)) {
 
       for (m = chan->channel.member; m && m->nick[0]; m = m->next) {
         member_getuser(m, 1);
@@ -1362,12 +1364,12 @@ static void do_invite(int idx, char *par, bool op)
 
   while (chan) {
 
-    get_user_flagrec(dcc[idx].user, &user, chan->dname);
-    if (privchan(user, chan, PRIV_OP)) {
+    get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
+    if (privchan(irc_user, chan, PRIV_OP)) {
       if (all) goto next;
       dprintf(idx, "No such channel.\n");
     }
-    else if (!real_chk_op(user, chan, 0)) {
+    else if (!real_chk_op(irc_user, chan, 0)) {
       if (all) goto next;
       dprintf(idx, "You don't have access to invite to %s\n", chan->dname);
       return;
@@ -1417,7 +1419,7 @@ static void cmd_authed(int idx, char *par)
 {
   putlog(LOG_CMDS, "*", STR("#%s# authed"), dcc[idx].nick);
 
-  dprintf(idx, STR("Authed:\n"));
+  dprintf(idx, "%s", STR("Authed:\n"));
   Auth::TellAuthed(idx);
 }
 
@@ -1468,7 +1470,7 @@ static void cmd_channel(int idx, char *par)
   size_t maxnicklen, maxhandlen;
   char format[81] = "";
 
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
   putlog(LOG_CMDS, "*", "#%s# (%s) channel", dcc[idx].nick, chan->dname);
   strlcpy(s, getchanmode(chan), sizeof s);
@@ -1528,47 +1530,47 @@ static void cmd_channel(int idx, char *par)
 	strlcpy(handle, "*", sizeof handle);
        else
        	strlcpy(handle, m->user->handle, sizeof handle);
-      get_user_flagrec(m->user, &user, chan->dname);
+      get_user_flagrec(m->user, &irc_user, chan->dname);
       /* Determine status char to use */
-      if (glob_bot(user) && chk_op(user, chan))
+      if (glob_bot(irc_user) && chk_op(irc_user, chan))
         atrflag = 'B';
-      else if (glob_bot(user))
+      else if (glob_bot(irc_user))
         atrflag = 'b';
-      else if (glob_owner(user))
+      else if (glob_owner(irc_user))
         atrflag = 'N';
-      else if (chan_owner(user))
+      else if (chan_owner(irc_user))
         atrflag = 'n';
-      else if (glob_master(user))
+      else if (glob_master(irc_user))
         atrflag = 'M';
-      else if (chan_master(user))
+      else if (chan_master(irc_user))
         atrflag = 'm';
-      else if (glob_deop(user))
+      else if (glob_deop(irc_user))
         atrflag = 'D';
-      else if (chan_deop(user))
+      else if (chan_deop(irc_user))
         atrflag = 'd';
-      else if (glob_autoop(user))
+      else if (glob_autoop(irc_user))
         atrflag = 'A';
-      else if (chan_autoop(user))
+      else if (chan_autoop(irc_user))
         atrflag = 'a';
-      else if (glob_op(user) && !privchan(user, chan, PRIV_OP))
+      else if (glob_op(irc_user) && !privchan(irc_user, chan, PRIV_OP))
         atrflag = 'O';
-      else if (chan_op(user))
+      else if (chan_op(irc_user))
         atrflag = 'o';
-      else if (glob_quiet(user))
+      else if (glob_quiet(irc_user))
         atrflag = 'Q';
-      else if (chan_quiet(user))
+      else if (chan_quiet(irc_user))
         atrflag = 'q';
-      else if (glob_voice(user) && !privchan(user, chan, PRIV_VOICE))
+      else if (glob_voice(irc_user) && !privchan(irc_user, chan, PRIV_VOICE))
         atrflag = 'V';
-      else if (chan_voice(user))
+      else if (chan_voice(irc_user))
         atrflag = 'v';
-      else if (glob_kick(user))
+      else if (glob_kick(irc_user))
         atrflag = 'K';
-      else if (chan_kick(user))
+      else if (chan_kick(irc_user))
         atrflag = 'k';
-      else if (glob_wasoptest(user))
+      else if (glob_wasoptest(irc_user))
         atrflag = 'W';
-      else if (chan_wasoptest(user))
+      else if (chan_wasoptest(irc_user))
         atrflag = 'w';
       else
 	atrflag = ' ';
@@ -1635,7 +1637,7 @@ static void cmd_topic(int idx, char *par)
   if (!chan || !has_op(idx, chan))
     return;
 
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
   if (!channel_active(chan)) {
     dprintf(idx, "I'm not on %s right now!\n", chan->dname);
@@ -1666,7 +1668,7 @@ static void cmd_resetbans(int idx, char *par)
   if (!chan || !has_op(idx, chan))
     return;
 
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
   putlog(LOG_CMDS, "*", "#%s# (%s) resetbans", dcc[idx].nick, chan->dname);
   dprintf(idx, "Resetting bans on %s...\n", chan->dname);
@@ -1680,7 +1682,7 @@ static void cmd_resetexempts(int idx, char *par)
   if (!chan || !has_op(idx, chan))
     return;
 
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
   putlog(LOG_CMDS, "*", "#%s# (%s) resetexempts", dcc[idx].nick, chan->dname);
   dprintf(idx, "Resetting exempts on %s...\n", chan->dname);
@@ -1693,7 +1695,7 @@ static void cmd_resetinvites(int idx, char *par)
 
   if (!chan || !has_op(idx, chan))
     return;
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
   putlog(LOG_CMDS, "*", "#%s# (%s) resetinvites", dcc[idx].nick, chan->dname);
   dprintf(idx, "Resetting resetinvites on %s...\n", chan->dname);
@@ -1797,7 +1799,7 @@ static void cmd_adduser(int idx, char *par)
   } else {
     dprintf(idx, "Added hostmask %s to %s.\n", p1, u->handle);
     addhost_by_handle(hand, p1);
-    get_user_flagrec(u, &user, chan->dname);
+    get_user_flagrec(u, &irc_user, chan->dname);
     check_this_user(hand, 0, NULL);
   }
 
@@ -1826,7 +1828,7 @@ static void cmd_deluser(int idx, char *par)
     dprintf(idx, "%s is not on any channels I monitor\n", nick);
     return;
   }
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
   member_getuser(m);
   if (!(u = m->user)) {
     dprintf(idx, "%s is not a valid user.\n", nick);
@@ -1835,20 +1837,20 @@ static void cmd_deluser(int idx, char *par)
   added = (char *) get_user(&USERENTRY_ADDED, u);
   newsplit(&added);
 
-  get_user_flagrec(u, &victim, NULL);
+  get_user_flagrec(u, &irc_victim, NULL);
   if (isowner(u->handle)) {
     dprintf(idx, "You can't remove a permanent bot owner!\n");
-  } else if (glob_admin(victim) && !isowner(dcc[idx].nick)) {
+  } else if (glob_admin(irc_victim) && !isowner(dcc[idx].nick)) {
     dprintf(idx, "You can't remove an admin!\n");
-  } else if (glob_owner(victim)) {
+  } else if (glob_owner(irc_victim)) {
     dprintf(idx, "You can't remove a bot owner!\n");
-  } else if (chan_owner(victim) && !glob_owner(user)) {
+  } else if (chan_owner(irc_victim) && !glob_owner(irc_user)) {
     dprintf(idx, "You can't remove a channel owner!\n");
-  } else if (chan_master(victim) && !(glob_owner(user) || chan_owner(user))) {
+  } else if (chan_master(irc_victim) && !(glob_owner(irc_user) || chan_owner(irc_user))) {
     dprintf(idx, "You can't remove a channel master!\n");
-  } else if (glob_bot(victim) && !glob_owner(user)) {
+  } else if (glob_bot(irc_victim) && !glob_owner(irc_user)) {
     dprintf(idx, "You can't remove a bot!\n");
-  } else if (!glob_master(user) && strcasecmp(dcc[idx].nick, added)) {
+  } else if (!glob_master(irc_user) && strcasecmp(dcc[idx].nick, added)) {
     dprintf(idx, "Sorry, you may not delete this user as you did not add them.\n");
   } else {
     char buf[HANDLEN + 1] = "";
@@ -1871,12 +1873,12 @@ static void cmd_reset(int idx, char *par)
     chan = findchan_by_dname(par);
 
     if (chan)
-      get_user_flagrec(dcc[idx].user, &user, chan->dname);
-    if (!chan || privchan(user, chan, PRIV_OP)) {
+      get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
+    if (!chan || privchan(irc_user, chan, PRIV_OP)) {
       dprintf(idx, "I don't monitor that channel.\n");
     } else {
-      get_user_flagrec(dcc[idx].user, &user, par);
-      if (!glob_master(user) && !chan_master(user)) {
+      get_user_flagrec(dcc[idx].user, &irc_user, par);
+      if (!glob_master(irc_user) && !chan_master(irc_user)) {
 	dprintf(idx, "You are not a master on %s.\n", chan->dname);
       } else if (!channel_active(chan)) {
 	dprintf(idx, "I'm not on %s at the moment!\n", chan->dname);
@@ -1928,7 +1930,7 @@ static void cmd_play(int idx, char *par)
     return;
   }
 
-  get_user_flagrec(dcc[idx].user, &user, chan->dname);
+  get_user_flagrec(dcc[idx].user, &irc_user, chan->dname);
 
   if (!me_op(chan) && !isowner(dcc[idx].nick)) {
     dprintf(idx, "Cannot play to %s: I am not opped.\n", chan->dname);
@@ -1978,7 +1980,7 @@ static void cmd_play(int idx, char *par)
   dprintf(idx, "Estimated time-to-play: %li seconds\n", time_to_play);
 }
 
-static cmd_t irc_dcc[] =
+cmd_t irc_dcc[] =
 {
   {"act",		"o|o",	 (Function) cmd_act,		NULL, LEAF},
   {"adduser",		"m|m",	 (Function) cmd_adduser,	NULL, LEAF|AUTH},

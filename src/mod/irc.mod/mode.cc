@@ -27,12 +27,196 @@
  */
 
 
+#include "irc_shared.h"
+
 #include "src/shell.h"
+#include <vector>
 
 /* Reversing this mode? */
-static bool reversing = 0;
+bool reversing = 0;
 static bool massop = 0;
 static bool mdop_reversing = 1;
+
+/* Pending cookie retry for stale userhosts (Option D).
+ * When checkcookie() returns BC_HASH, we store the cookie data, send WHO
+ * for opper+opped to refresh userhosts, and retry when WHO replies arrive. */
+struct pending_cookie_t {
+  char chan[81];
+  char opper_nick[NICKLEN];
+  char opped_nick[NICKLEN];
+  char cookie[300];
+  int indexHint;
+  time_t timestamp;
+  bool opper_refreshed;
+  bool opped_refreshed;
+};
+static std::vector<pending_cookie_t> pending_cookies;
+static const int MAX_PENDING_COOKIES = 32;
+static const int PENDING_COOKIE_TIMEOUT = 5;
+
+void store_pending_cookie(struct chanset_t *chan, memberlist *opper,
+    memberlist *opped, const char *cookie, int indexHint)
+{
+  pending_cookie_t pc;
+  strlcpy(pc.chan, chan->dname, sizeof(pc.chan));
+  strlcpy(pc.opper_nick, opper->nick, sizeof(pc.opper_nick));
+  strlcpy(pc.opped_nick, opped->nick, sizeof(pc.opped_nick));
+  strlcpy(pc.cookie, cookie, sizeof(pc.cookie));
+  pc.indexHint = indexHint;
+  pc.timestamp = now;
+  pc.opper_refreshed = false;
+  pc.opped_refreshed = false;
+  pending_cookies.push_back(pc);
+
+  putlog(LOG_GETIN, "*", "Deferred cookie check for %s -> %s in %s (WHO sent)",
+      opper->nick, opped->nick, chan->dname);
+
+  /* Send WHO for both opper and opped to refresh userhosts */
+  dprintf(DP_SERVER, "WHO %s\n", opper->nick);
+  dprintf(DP_SERVER, "WHO %s\n", opped->nick);
+}
+
+void retry_pending_cookies_for_nick(struct chanset_t *chan, const char *nick)
+{
+  char tmp[1024] = "";
+
+  for (int i = pending_cookies.size() - 1; i >= 0; --i) {
+    pending_cookie_t &pc = pending_cookies[i];
+
+    /* Only check cookies for this channel */
+    if (rfc_casecmp(pc.chan, chan->dname))
+      continue;
+
+    /* Mark the matching side as refreshed */
+    if (!pc.opper_refreshed && !rfc_casecmp(pc.opper_nick, nick))
+      pc.opper_refreshed = true;
+    else if (!pc.opped_refreshed && !rfc_casecmp(pc.opped_nick, nick))
+      pc.opped_refreshed = true;
+    else
+      continue;
+
+    /* Both must be refreshed before we can retry */
+    if (!pc.opper_refreshed || !pc.opped_refreshed)
+      continue;
+
+    /* Look up both members */
+    memberlist *opper = ismember(chan, pc.opper_nick);
+    memberlist *opped = ismember(chan, pc.opped_nick);
+
+    if (!opper || !opped) {
+      /* One of them left the channel — genuine failure */
+      putlog(LOG_WARNING, "*", "Pending cookie: %s or %s left %s, applying kick",
+          pc.opper_nick, pc.opped_nick, pc.chan);
+      pending_cookies.erase(pending_cookies.begin() + i);
+      continue;
+    }
+
+    /* Re-attempt cookie verification with updated userhosts */
+    int result = checkcookie(pc.chan, opper, opped, pc.cookie, pc.indexHint);
+    if (result == 0) {
+      /* Success — cookie is now valid, op stands */
+      putlog(LOG_GETIN, "*", "Cookie retry succeeded for %s -> %s in %s",
+          pc.opper_nick, pc.opped_nick, pc.chan);
+      pending_cookies.erase(pending_cookies.begin() + i);
+    } else {
+      /* Retry failed — genuine bad cookie, apply kicks */
+      putlog(LOG_WARNING, "*", "Cookie retry failed for %s -> %s in %s (%d), applying kick",
+          pc.opper_nick, pc.opped_nick, pc.chan, result);
+
+      /* Kick the opped client (1/7 chance) */
+      if (randint(7) == (unsigned int) pc.indexHint) {
+        if (!chan_sentkick(opped)) {
+          opped->flags |= SENTKICK;
+          const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n",
+              chan->name, pc.opped_nick, CtcpModule::kickprefix(), response(RES_BADOPPED));
+          dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
+        }
+      }
+
+      /* Kick the opper (1/7 chance) */
+      if (randint(7) == 0) {
+        if (!chan_sentkick(opper)) {
+          opper->flags |= SENTKICK;
+          const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n",
+              chan->name, pc.opper_nick, CtcpModule::kickprefix(), response(RES_BADOP));
+          dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
+        }
+        /* Deflag opper */
+        struct userrec *u = opper->user;
+        if (u) {
+          simple_snprintf(tmp, sizeof(tmp), "%s MODE %s bad cookie",
+              opper->nick, pc.chan);
+          deflag_user(u, DEFLAG_EVENT_BADCOOKIE, tmp, chan);
+        }
+      }
+
+      pending_cookies.erase(pending_cookies.begin() + i);
+    }
+  }
+}
+
+void cleanup_expired_cookies(void)
+{
+  char tmp[1024] = "";
+
+  for (int i = pending_cookies.size() - 1; i >= 0; --i) {
+    pending_cookie_t &pc = pending_cookies[i];
+
+    if ((now - pc.timestamp) <= PENDING_COOKIE_TIMEOUT)
+      continue;
+
+    /* Expired — attempt one final verification */
+    struct chanset_t *chan = findchan(pc.chan);
+    if (!chan) {
+      pending_cookies.erase(pending_cookies.begin() + i);
+      continue;
+    }
+
+    memberlist *opper = ismember(chan, pc.opper_nick);
+    memberlist *opped = ismember(chan, pc.opped_nick);
+
+    if (!opper || !opped) {
+      pending_cookies.erase(pending_cookies.begin() + i);
+      continue;
+    }
+
+    int result = checkcookie(pc.chan, opper, opped, pc.cookie, pc.indexHint);
+    if (result == 0) {
+      putlog(LOG_GETIN, "*", "Pending cookie expired but valid for %s -> %s in %s",
+          pc.opper_nick, pc.opped_nick, pc.chan);
+    } else {
+      /* Genuine failure — apply kicks */
+      putlog(LOG_WARNING, "*", "Pending cookie expired for %s -> %s in %s (%d), applying kick",
+          pc.opper_nick, pc.opped_nick, pc.chan, result);
+
+      if (randint(7) == (unsigned int) pc.indexHint) {
+        if (!chan_sentkick(opped)) {
+          opped->flags |= SENTKICK;
+          const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n",
+              chan->name, pc.opped_nick, CtcpModule::kickprefix(), response(RES_BADOPPED));
+          dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
+        }
+      }
+
+      if (randint(7) == 0) {
+        if (!chan_sentkick(opper)) {
+          opper->flags |= SENTKICK;
+          const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n",
+              chan->name, pc.opper_nick, CtcpModule::kickprefix(), response(RES_BADOP));
+          dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
+        }
+        struct userrec *u = opper->user;
+        if (u) {
+          simple_snprintf(tmp, sizeof(tmp), "%s MODE %s bad cookie",
+              opper->nick, pc.chan);
+          deflag_user(u, DEFLAG_EVENT_BADCOOKIE, tmp, chan);
+        }
+      }
+    }
+
+    pending_cookies.erase(pending_cookies.begin() + i);
+  }
+}
 
 #  define PLUS    BIT0
 #  define MINUS   BIT1
@@ -42,8 +226,8 @@ static bool mdop_reversing = 1;
 #  define EXEMPT  BIT5
 #  define INVITE  BIT6
 
-static struct flag_record user = { FR_GLOBAL | FR_CHAN, 0, 0, 0 };
-static struct flag_record victim = { FR_GLOBAL | FR_CHAN, 0, 0, 0 };
+struct flag_record irc_user = { FR_GLOBAL | FR_CHAN, 0, 0, 0 };
+struct flag_record irc_victim = { FR_GLOBAL | FR_CHAN, 0, 0, 0 };
 
 /*        This implementation wont overrun dst - 'max' is the max bytes that dst
  *      can be, including the null terminator. So if 'dst' is a 128 byte buffer,
@@ -92,7 +276,7 @@ static size_t egg_strcatn(char *dst, const char *src, size_t max)
   return tmpmax - max;
 }
 
-static bool
+bool
 do_op(memberlist *m, struct chanset_t *chan, bool delay, bool force)
 {
   if (!me_op(chan) || !m || (!force && (chan_hasop(m) || chan_sentop(m))))
@@ -121,14 +305,31 @@ flush_cookies(struct chanset_t *chan, int pri)
   if (connect_bursting) // Make sure not in burst mode
     return;
 
+  if (!modesperline)    /* Haven't received 005 yet :) */
+    return;
+
+  /* Resolve our own member before consuming the queue. If we can't make a
+   * cookie, leave the queued ops (and cbytes) intact for a later flush
+   * instead of silently dropping them. */
+  memberlist *me = ismember(chan, botname);
+
+  if (me) {
+    me->user = conf.bot->u;
+    me->tried_getuser = 1;
+  }
+
+  /* Am I even on the channel? */
+  if (!me || !me->user)
+    return;
+
   char out[512] = "", *p = out, post[512] = "";
   size_t postsize = sizeof(post) - 1;
-  memberlist *nicks[3] = { NULL, NULL, NULL };
+  memberlist *nicks[COOKIE_MAX_NICKS] = { NULL };
 
   chan->cbytes = 0;
 
   int nick_i = 0;
-  for (unsigned int i = 0; i < (modesperline - 1); i++) {
+  for (unsigned int i = 0; i < cookie_queue_capacity(); i++) {
     if (chan->ccmode[i].op && postsize > strlen(chan->ccmode[i].op)) {
       memberlist* mx = ismember(chan, chan->ccmode[i].op);
 
@@ -156,17 +357,6 @@ flush_cookies(struct chanset_t *chan, int pri)
   *p = 0;
 
   if (post[0]) {
-    memberlist* me = ismember(chan, botname);
-
-    if (me) {
-      me->user = conf.bot->u;
-      me->tried_getuser = 1;
-    }
-
-    /* Am I even on the channel? */
-    if (!me || !me->user)
-      return;
-
     /* remove the trailing space... */
     size_t myindex = (sizeof(post) - 1) - postsize;
 
@@ -195,7 +385,7 @@ flush_cookies(struct chanset_t *chan, int pri)
   }
 }
 
-static void
+void
 flush_mode(struct chanset_t *chan, int pri)
 {
   if (!modesperline)            /* Haven't received 005 yet :) */
@@ -436,13 +626,15 @@ real_add_mode(struct chanset_t *chan, const char plus, const char mode, const ch
     /* op-type mode change */
     /* for cookie ops, use ccmode instead of cmode */
     if (cookie) {
-      for (i = 0; i < (modesperline - 1); i++)
+      const unsigned int cap = cookie_queue_capacity();
+
+      for (i = 0; i < cap; i++)
         if (chan->ccmode[i].op != NULL && !rfc_casecmp(chan->ccmode[i].op, op))
           return;               /* Already in there :- duplicate */
       len = strlen(op) + 1;
       if (chan->cbytes + len > mode_buf_len)
         flush_mode(chan, NORMAL);
-      for (i = 0; i < (modesperline - 1); i++)
+      for (i = 0; i < cap; i++)
         if (!chan->ccmode[i].op) {
           chan->ccmode[i].op = (char *) calloc(1, len);
           chan->cbytes += len;    /* Add 1 for safety */
@@ -516,8 +708,9 @@ real_add_mode(struct chanset_t *chan, const char plus, const char mode, const ch
     flush_mode(chan, NORMAL);   /* Full buffer! Flush modes. */
  
   /* flush full cookie queue */
-  modes = modesperline - 1;
-  for (i = 0; i < (modesperline - 1); i++)
+  const unsigned int cookie_cap = cookie_queue_capacity();
+  modes = cookie_cap;
+  for (i = 0; i < cookie_cap; i++)
     if (chan->ccmode[i].op)
       modes--;
   if (modes < 1)
@@ -532,7 +725,7 @@ static void
 got_key(struct chanset_t *chan, char *key)
 {
   if (((reversing) && !(chan->key_prot[0])) ||
-      ((chan->mode_mns_prot & CHANKEY) && !(glob_master(user) || glob_bot(user) || chan_master(user)))) {
+      ((chan->mode_mns_prot & CHANKEY) && !(glob_master(irc_user) || glob_bot(irc_user) || chan_master(irc_user)))) {
     if (key && key[0]) {
       add_mode(chan, '-', 'k', key);
     } else {
@@ -558,9 +751,16 @@ got_op(struct chanset_t *chan, memberlist *m, memberlist *mv)
   if (!meop && me_opped) {
     check_chan = 1;
     meop = 1;
+    /* Only log if channel was completely opless (first bot to get ops).
+     * Avoids spamming the partyline when multiple bots get opped. */
+    bool had_ops = false;
+    for (memberlist *x = chan->channel.member; x && x->nick[0]; x = x->next)
+      if (!x->is_me && chan_hasop(x)) { had_ops = true; break; }
+    if (!had_ops)
+      putlog(LOG_MISC, "*", "Got ops on %s.", chan->dname);
   }
 
-  get_user_flagrec(mv->user, &victim, chan->dname, chan);
+  get_user_flagrec(mv->user, &irc_victim, chan->dname, chan);
 
   // Did some other bot just get opped, and I'm not opped yet?
   if (mv->user && mv->user->bot && !me_opped && !meop) {
@@ -587,12 +787,21 @@ got_op(struct chanset_t *chan, memberlist *m, memberlist *mv)
   if (channel_pending(chan))
     return;
 
+  /* Keep the ROLE_OP election current so the elected holder can fan out
+   * ops immediately instead of waiting for the 10s rebalance timer. */
+  if (mv->user && mv->user->bot)
+    rebalance_roles_chan(chan);
+
+  /* Ask for ops promptly when a peer bot was just opped and I'm not. */
+  if (chan->channel.do_opreq)
+    request_op(chan);
+
   /* I'm opped, and the opper isn't me, and it isn't a server op */
   if (m && meop && !me_opped) {
     /* deop if they are +d or it is +bitch */
     int bitch = chan_bitch(chan);
 
-    if (reversing || chk_deop(victim, chan) || (!loading && userlist && bitch && !chk_op(victim, chan))) {     /* chk_op covers +private */
+    if (reversing || chk_deop(irc_victim, chan) || (!loading && userlist && bitch && !chk_op(irc_victim, chan))) {     /* chk_op covers +private */
       int num = randint(10);
       char outbuf[101] = "";
       size_t len = 0;
@@ -627,7 +836,7 @@ got_op(struct chanset_t *chan, memberlist *m, memberlist *mv)
 
   /* server op */
   if (!m && meop && !me_opped) {
-    if (chk_deop(victim, chan) || (chan_bitch(chan) && !chk_op(victim, chan))) {
+    if (chk_deop(irc_victim, chan) || (chan_bitch(chan) && !chk_op(irc_victim, chan))) {
       mv->flags |= FAKEOP;
       add_mode(chan, '-', 'o', mv);
     } 
@@ -646,8 +855,46 @@ got_op(struct chanset_t *chan, memberlist *m, memberlist *mv)
     free(buf);
 #endif
 
+    /* Op eligible bots first, then users, from the ROLE_OP holder. */
+    op_fanout(chan, true);
     /* check exempts/invites and shit */
     recheck_channel(chan, 2);
+
+    /* I just got opped. If the channel is invite-only, actively pull in the
+     * group peers that should be here: ask capable bots to (re)send their
+     * invite request ('gi r', accurate nick) and INVITE the rest directly
+     * (covers older bots that don't understand 'gi r'). Throttled per
+     * channel so op/deop loops can't spam the botnet. */
+    if (me_op(chan) && (chan->channel.mode & CHANINV) &&
+        (now - chan->channel.invite_pull) >= 30) {
+      struct flag_record ifr = { FR_GLOBAL | FR_CHAN | FR_BOT, 0, 0, 0 };
+      bd::String pull;
+      int missing = 0;
+
+      for (tand_t *b = tandbot; b; b = b->next) {
+        if (b->hub || !b->u)
+          continue;
+
+        get_user_flagrec(b->u, &ifr, chan->dname, chan);
+        if (!bot_shouldjoin(b->u, &ifr, chan) || !chk_op(ifr, chan))
+          continue;
+
+        if (ismember(chan, b->bot))
+          continue;
+
+        ++missing;
+        if (!pull.length())
+          pull = bd::String::printf("gi r %s", chan->dname);
+
+        dprintf(DP_MODE, "INVITE %s %s\n", b->bot, chan->name[0] ? chan->name : chan->dname);
+      }
+
+      if (missing) {
+        putallbots(pull.c_str());
+        chan->channel.invite_pull = now;
+        putlog(LOG_GETIN, "*", "Pulled %d bot(s) into invite-only %s", missing, chan->dname);
+      }
+    }
   }
 }
 
@@ -660,7 +907,7 @@ got_deop(struct chanset_t *chan, memberlist *m, memberlist *mv, char *isserver)
     return;
 
   /* m is NULL if a server made the change */
-  get_user_flagrec(mv->user, &victim, chan->dname, chan);
+  get_user_flagrec(mv->user, &irc_victim, chan->dname, chan);
 
   /* Flags need to be set correctly right from the beginning now, so that
    * add_mode() doesn't get irritated.
@@ -674,6 +921,7 @@ got_deop(struct chanset_t *chan, memberlist *m, memberlist *mv, char *isserver)
 
   if (mv->user && mv->user->bot) {
     chan->role_rebalance_cookie = 0;
+    rebalance_roles_chan(chan);
   }
 
   /* Deop'd someone on my oplist? */
@@ -686,9 +934,9 @@ got_deop(struct chanset_t *chan, memberlist *m, memberlist *mv, char *isserver)
            * reversing
            * They are either an op or this chan is -bitch
            */
-          (reversing && (!chan_bitch(chan) || chk_op(victim, chan))) ||
+          (reversing && (!chan_bitch(chan) || chk_op(irc_victim, chan))) ||
           /* Reop bots to avoid them needing to ask */
-          ((chan->role & ROLE_PROTECT) && mv->user && mv->user->bot && chk_op(victim, chan))
+          ((chan->role & ROLE_PROTECT) && mv->user && mv->user->bot && chk_op(irc_victim, chan))
         )
        ) {
       /* Then we'll bless the victim */
@@ -728,7 +976,7 @@ got_deop(struct chanset_t *chan, memberlist *m, memberlist *mv, char *isserver)
     if (chan->revenge && m && m != mv && mv->user && mv->user->bot && !(m->user && m->user->bot)) {
       if ((chan->role & ROLE_REVENGE) && !chan_sentkick(m) && me_op(chan)) {
         m->flags |= SENTKICK;
-        dprintf(DP_MODE_NEXT, "KICK %s %s :%s%s\r\n", chan->name, m->nick, kickprefix, response(RES_REVENGE));
+        dprintf(DP_MODE_NEXT, "KICK %s %s :%s%s\r\n", chan->name, m->nick, CtcpModule::kickprefix(), response(RES_REVENGE));
       } else {
         if (m->user) {
           char tmp[128] = "";
@@ -775,7 +1023,7 @@ got_ban(struct chanset_t *chan, memberlist *m, char *mask, char *isserver)
   if (chan->revenge && m && matched_bot && !(m->user && m->user->bot)) {
     if ((chan->role & ROLE_REVENGE) && !chan_sentkick(m)) {
       m->flags |= SENTKICK;
-      dprintf(DP_MODE_NEXT, "KICK %s %s :%s%s\r\n", chan->name, m->nick, kickprefix, response(RES_REVENGE));
+      dprintf(DP_MODE_NEXT, "KICK %s %s :%s%s\r\n", chan->name, m->nick, CtcpModule::kickprefix(), response(RES_REVENGE));
     } else {
       if (m->user) {
         char tmp[128] = "";
@@ -792,7 +1040,7 @@ got_ban(struct chanset_t *chan, memberlist *m, char *mask, char *isserver)
   }
 
   if (m && !m->is_me) {
-    if (channel_nouserbans(chan) && !glob_bot(user)) {
+    if (channel_nouserbans(chan) && !glob_bot(irc_user)) {
       add_mode(chan, '-', 'b', mask);
       return;
     }
@@ -800,9 +1048,9 @@ got_ban(struct chanset_t *chan, memberlist *m, char *mask, char *isserver)
 
     for (size_t n = 0; n < matchedUserMembers.size(); ++n) {
       const memberlist *mv = matchedUserMembers[n];
-      get_user_flagrec(mv->user, &victim, chan->dname, chan);
-      if (!(glob_kick(victim) || chan_kick(victim)) &&
-          (((chk_op(victim, chan) && !chan_master(user) && !glob_master(user) && !glob_bot(user)) ||
+      get_user_flagrec(mv->user, &irc_victim, chan->dname, chan);
+      if (!(glob_kick(irc_victim) || chan_kick(irc_victim)) &&
+          (((chk_op(irc_victim, chan) && !chan_master(irc_user) && !glob_master(irc_user) && !glob_bot(irc_user)) ||
             (mv->user->bot && findbot(mv->user->handle))))) {
         /* if (target_priority(chan, m, 0)) */
         add_mode(chan, '-', 'b', mask);
@@ -865,7 +1113,7 @@ got_unban(struct chanset_t *chan, memberlist *m, char *mask)
   if ((u_equals_mask(global_bans, mask) || u_equals_mask(chan->bans, mask)) &&
       me_op(chan) && !channel_dynamicbans(chan)) {
     /* That's a permban! */
-    if (!glob_bot(user) && !chk_op(user, chan))
+    if (!glob_bot(irc_user) && !chk_op(irc_user, chan))
       add_mode(chan, '+', 'b', mask);
   }
 }
@@ -883,7 +1131,7 @@ got_exempt(struct chanset_t *chan, memberlist *m, char *mask, char *isserver)
     return;
 
   if (m && !m->is_me) {   /* It's not my exemption */
-    if (channel_nouserexempts(chan) && !glob_bot(user) && !glob_master(user) && !chan_master(user)) {
+    if (channel_nouserexempts(chan) && !glob_bot(irc_user) && !glob_master(irc_user) && !chan_master(irc_user)) {
       /* No exempts made by users */
       add_mode(chan, '-', 'e', mask);
       return;
@@ -928,7 +1176,7 @@ got_unexempt(struct chanset_t *chan, memberlist *m, char *mask)
   }
   /* If exempt was removed by master then leave it else check for bans */
   /* FIXME: this is impossible, if server !isbot ? */
-  if (!m && glob_bot(user) && !glob_master(user) && !chan_master(user)) {
+  if (!m && glob_bot(irc_user) && !glob_master(irc_user) && !chan_master(irc_user)) {
     b = chan->channel.ban;
     while (b->mask[0] && !match) {
       if (wild_match(b->mask, mask) || wild_match(mask, b->mask)) {
@@ -939,7 +1187,7 @@ got_unexempt(struct chanset_t *chan, memberlist *m, char *mask)
     }
   }
   if ((u_equals_mask(global_exempts, mask) || u_equals_mask(chan->exempts, mask)) &&
-      me_op(chan) && !channel_dynamicexempts(chan) && !glob_bot(user))
+      me_op(chan) && !channel_dynamicexempts(chan) && !glob_bot(irc_user))
     add_mode(chan, '+', 'e', mask);
 
   if (channel_enforcebans(chan))
@@ -959,7 +1207,7 @@ got_invite(struct chanset_t *chan, memberlist *m, char *mask, char *isserver)
     return;
 
   if (m && !m->is_me) {   /* It's not my invitation */
-    if (channel_nouserinvites(chan) && !glob_bot(user) && !glob_master(user) && !chan_master(user)) {
+    if (channel_nouserinvites(chan) && !glob_bot(irc_user) && !glob_master(irc_user) && !chan_master(irc_user)) {
       /* No exempts made by users */
       add_mode(chan, '-', 'I', mask);
       return;
@@ -1001,10 +1249,10 @@ got_uninvite(struct chanset_t *chan, memberlist *m, char *mask)
      */
     add_mode(chan, '+', 'I', mask);
   }
-  if (!m && glob_bot(user) && !glob_master(user) && !chan_master(user) && (chan->channel.mode & CHANINV))
+  if (!m && glob_bot(irc_user) && !glob_master(irc_user) && !chan_master(irc_user) && (chan->channel.mode & CHANINV))
     add_mode(chan, '+', 'I', mask);
   if ((u_equals_mask(global_invites, mask) ||
-       u_equals_mask(chan->invites, mask)) && me_op(chan) && !channel_dynamicinvites(chan) && !glob_bot(user))
+       u_equals_mask(chan->invites, mask)) && me_op(chan) && !channel_dynamicinvites(chan) && !glob_bot(irc_user))
     add_mode(chan, '+', 'I', mask);
 }
 
@@ -1024,7 +1272,7 @@ static memberlist *assert_ismember(struct chanset_t *chan, const char *nick)
   return m;
 }
 
-static int
+int
 gotmode(char *from, char *msg)
 {
 #define msign	modes[i][0]
@@ -1089,7 +1337,7 @@ gotmode(char *from, char *msg)
       massop = reversing = 0;
 
       irc_log(chan, "%s!%s sets mode: %s", nick, from, msg);
-      get_user_flagrec(u, &user, ch);
+      get_user_flagrec(u, &irc_user, ch);
 
 
       if (1) { // Place in block to hint chg/sign to be destroyed when done
@@ -1104,7 +1352,7 @@ gotmode(char *from, char *msg)
 
             if (strchr("beIlkov", chg[0])) {
               mp = newsplit(&msg);       /* PARAM as noted above */
-              fixcolon(mp);
+              mp = fixcolon(mp);
             }
 
             /* Just want o's and b's */
@@ -1154,7 +1402,7 @@ gotmode(char *from, char *msg)
             if (chan->mdop) {
               if ((chan->role & ROLE_PROTECT) && !chan_sentkick(m)) {
                 m->flags |= SENTKICK;
-                const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, m->nick, kickprefix, response(RES_MASSDEOP));
+                const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, m->nick, CtcpModule::kickprefix(), response(RES_MASSDEOP));
                 dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
               } else {
                 if (u) {
@@ -1174,7 +1422,7 @@ gotmode(char *from, char *msg)
               if (m && !chan_sentkick(m)) {
                 if ((chan->role & ROLE_PROTECT)) {
                   m->flags |= SENTKICK;
-                  const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, m->nick, kickprefix, response(RES_MANUALOP));
+                  const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, m->nick, CtcpModule::kickprefix(), response(RES_MANUALOP));
                   dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
                 } else { 
                   if (u) {
@@ -1195,7 +1443,7 @@ gotmode(char *from, char *msg)
         }
         if (ops) {
           /* Check cookies */
-          if (u && m && u->bot && !channel_fastop(chan) && !channel_take(chan) && !cookies_disabled) {
+          if (u && m && u->bot && !channel_fastop(chan) && !channel_take(chan) && !cookies_disabled && !chan->channel.parttime) {
             int isbadop = 0;
             bool failure = 0;
 
@@ -1206,25 +1454,39 @@ gotmode(char *from, char *msg)
             } else {
               /* Check the hash for each opped nick and punish the opped client if it fails
                * Punish the opper lastly (and once)
+               *
+               * On BC_HASH: defer kick and send WHO to refresh stale userhosts.
+               * On other errors (BC_SLACK, BC_COUNTER, BC_NOCOOKIE): kick immediately.
                */
+              int cookie_index = 0;
               for (i = 0; i < (modecnt - 1); i++) { /* Don't need to hit the -b */
                 if (msign == '+' && mmode == 'o') {
+                  /* Cookie hash slot: ordinal of this +o, not the position of
+                   * the mode char in the line. Advancing before the !mv
+                   * continue keeps later ops aligned with their hashes, and
+                   * the first +o reaches index 0 so the counter check runs. */
+                  const int this_index = cookie_index++;
+
                   mv = assert_ismember(chan, mparam);
                   // Unknown client - I am desycned, don't punish or it may lead to fight
                   if (!mv) continue;
 
                   const char *cookie = &(modes[modecnt - 1][3]);
-                  if ((isbadop = checkcookie(chan->dname, m, mv, cookie, i))) {
-                    //if (!failure) { /* First failure */
+                  if ((isbadop = checkcookie(chan->dname, m, mv, cookie, this_index))) {
+                    if (isbadop == BC_HASH && (int)pending_cookies.size() < MAX_PENDING_COOKIES) {
+                      /* Defer: store pending cookie, send WHO, skip kick for this nick */
+                      store_pending_cookie(chan, m, mv, cookie, this_index);
+                      continue;
+                    }
+
                     failure = 1;
-                    //}
 
                     /* Kick the opped client */
-                    if (randint(7) == (unsigned int) i) {
+                    if (randint(7) == (unsigned int) this_index) {
                       if (!mv || !chan_sentkick(mv)) {
                         if (mv)
                           mv->flags |= SENTKICK;
-                        const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, mparam, kickprefix, response(RES_BADOPPED));
+                        const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, mparam, CtcpModule::kickprefix(), response(RES_BADOPPED));
                         dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
                       }
                     }
@@ -1242,7 +1504,7 @@ gotmode(char *from, char *msg)
                 /* Kick opper */
                 if (!chan_sentkick(m)) {
                   m->flags |= SENTKICK;
-                  const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, m->nick, kickprefix, response(RES_BADOP));
+                  const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, m->nick, CtcpModule::kickprefix(), response(RES_BADOP));
                   dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
                 }
                 simple_snprintf(tmp, sizeof(tmp), "%s MODE %s %s", m->from, chan->dname, modes[modecnt - 1]);
@@ -1275,7 +1537,7 @@ gotmode(char *from, char *msg)
 	    if (m && (chan->role & ROLE_PROTECT)) {
 	      /* Kick opper */
 	      if (!chan_sentkick(m)) {
-		const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, m->nick, kickprefix, response(RES_MANUALOP));
+		const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, m->nick, CtcpModule::kickprefix(), response(RES_MANUALOP));
 		dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
 		m->flags |= SENTKICK;
 	      }
@@ -1290,7 +1552,7 @@ gotmode(char *from, char *msg)
 		  if (!mv || !chan_sentkick(mv)) {
 		    if (mv)
 		      mv->flags |= SENTKICK;
-		    const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, mparam, kickprefix, response(RES_MANUALOPPED));
+		    const size_t len = simple_snprintf(tmp, sizeof(tmp), "KICK %s %s :%s%s\r\n", chan->name, mparam, CtcpModule::kickprefix(), response(RES_MANUALOPPED));
 		    dprintf_real(DP_MODE_NEXT, tmp, len, sizeof(tmp));
 		  }
 		}
@@ -1304,16 +1566,16 @@ gotmode(char *from, char *msg)
       if (m && channel_active(chan) && me_op(chan)) {
         if (chan_fakeop(m)) {
           putlog(LOG_MODES, ch, "Mode change by fake op on %s!  Reversing...", ch);
-          dprintf(DP_MODE, "KICK %s %s :%sAbusing ill-gained server ops\n", ch, m->nick, kickprefix);
+          dprintf(DP_MODE, "KICK %s %s :%sAbusing ill-gained server ops\n", ch, m->nick, CtcpModule::kickprefix());
           m->flags |= SENTKICK;
           reversing = 1;
         } else if (!chan_hasop(m) && !channel_nodesynch(chan)) {
-          if (u && u->bot && chk_op(user, chan)) {
+          if (u && u->bot && chk_op(irc_user, chan)) {
             putlog(LOG_MODES, ch, "Mode change by friendly non-chanop on %s!  Opping...", ch);
             do_op(m, chan, 0, 0);
           } else {
             putlog(LOG_MODES, ch, "Mode change by non-chanop on %s!  Reversing...", ch);
-            dprintf(DP_MODE, "KICK %s %s :%sAbusing desync\n", ch, m->nick, kickprefix);
+            dprintf(DP_MODE, "KICK %s %s :%sAbusing desync\n", ch, m->nick, CtcpModule::kickprefix());
             m->flags |= SENTKICK;
             reversing = 1;
           }
@@ -1400,11 +1662,11 @@ gotmode(char *from, char *msg)
                 if ((reversing) && (chan->channel.maxmembers != 0)) {
                   simple_snprintf(s, sizeof(s), "%d", chan->channel.maxmembers);
                   add_mode(chan, '+', 'l', s);
-                } else if ((chan->limit_prot != 0) && !glob_master(user) && !chan_master(user)) {
+                } else if ((chan->limit_prot != 0) && !glob_master(irc_user) && !chan_master(irc_user)) {
                   simple_snprintf(s, sizeof(s), "%d", chan->limit_prot);
                   add_mode(chan, '+', 'l', s);
                 } else {
-                  if (chan->limitraise && dolimit(chan) && (!chan_master(user) && !glob_master(user) && !glob_bot(user))) {
+                  if (chan->limitraise && dolimit(chan) && (!chan_master(irc_user) && !glob_master(irc_user) && !glob_bot(irc_user))) {
                     chan->channel.maxmembers = 0;     /* set this to 0 so a new limit is generated */
                     raise_limit(chan);
                   }
@@ -1420,14 +1682,14 @@ gotmode(char *from, char *msg)
               if (((reversing) &&
                     !(chan->mode_pls_prot & CHANLIMIT)) ||
                   ((chan->mode_mns_prot & CHANLIMIT) && 
-                   !glob_bot(user) && !glob_master(user) && !chan_master(user)))
+                   !glob_bot(irc_user) && !glob_master(irc_user) && !chan_master(irc_user)))
                 add_mode(chan, '-', 'l', "");
               if ((chan->limit_prot != chan->channel.maxmembers) && (chan->mode_pls_prot & CHANLIMIT) && (chan->limit_prot != 0) && 
-                  !glob_bot(user) && !glob_master(user) && !chan_master(user)) {
+                  !glob_bot(irc_user) && !glob_master(irc_user) && !chan_master(irc_user)) {
                 simple_snprintf(s, sizeof(s), "%d", chan->limit_prot);
                 add_mode(chan, '+', 'l', s);
               }
-              if (chan->limitraise && dolimit(chan) && !glob_bot(user) && (!chan_master(user) && !glob_master(user)))
+              if (chan->limitraise && dolimit(chan) && !glob_bot(irc_user) && (!chan_master(irc_user) && !glob_master(irc_user)))
                 raise_limit(chan);
             }
             break;
@@ -1447,7 +1709,7 @@ gotmode(char *from, char *msg)
               if (channel_active(chan)) {
                 if ((reversing) && (chan->channel.key[0]))
                   add_mode(chan, '+', 'k', chan->channel.key);
-                else if ((chan->key_prot[0]) && !glob_master(user) && !chan_master(user))
+                else if ((chan->key_prot[0]) && !glob_master(irc_user) && !chan_master(irc_user))
                   add_mode(chan, '+', 'k', chan->key_prot);
               }
               my_setkey(chan, NULL);
@@ -1470,11 +1732,11 @@ gotmode(char *from, char *msg)
             if (mv) {
               bool dv = 0;
 
-              get_user_flagrec(mv->user, &victim, chan->dname, chan);
+              get_user_flagrec(mv->user, &irc_victim, chan->dname, chan);
 
               if (msign == '+') {
                 if (mv->flags & EVOICE) {
-                  if (!chk_op(user, chan) && !chk_voice(mv, victim, chan)) {
+                  if (!chk_op(irc_user, chan) && !chk_voice(mv, irc_victim, chan)) {
                     dv = 1;
                   } else {
                     mv->flags &= ~EVOICE;
@@ -1483,7 +1745,7 @@ gotmode(char *from, char *msg)
                 mv->flags &= ~SENTVOICE;
                 mv->flags |= CHANVOICE;
                 if (channel_active(chan) && dovoice(chan)) {
-                  if (dv || chk_devoice(victim) || (channel_voicebitch(chan) && !chk_voice(mv, victim, chan))) {
+                  if (dv || chk_devoice(irc_victim) || (channel_voicebitch(chan) && !chk_voice(mv, irc_victim, chan))) {
                     add_mode(chan, '-', 'v', mv);
                   } else if (reversing) {
                     add_mode(chan, '-', 'v', mv);
@@ -1494,17 +1756,17 @@ gotmode(char *from, char *msg)
                 mv->flags &= ~CHANVOICE;
                 if (channel_active(chan) && dovoice(chan) && !chan_hasop(mv)) {
                   /* revoice +v users */
-                  if (chk_voice(mv, victim, chan)) {
+                  if (chk_voice(mv, irc_victim, chan)) {
                     add_mode(chan, '+', 'v', mv);
                   } else if (reversing) {
                     add_mode(chan, '+', 'v', mv);
                     /* if they arent +v|v and VOICER is m+ then EVOICE them */
                   } else {
                     if (!match_my_nick(nick) && channel_voice(chan) &&
-                        (chk_op(user, chan) || glob_bot(user)) &&
+                        (chk_op(irc_user, chan) || glob_bot(irc_user)) &&
                         rfc_casecmp(nick, mparam)) {
                       /* if the user is not +q set them norEVOICE. */
-                      if (!chan_quiet(victim)) {
+                      if (!chan_quiet(irc_victim)) {
                         set_devoice(chan, mv);
                       }
                     }
@@ -1546,7 +1808,7 @@ gotmode(char *from, char *msg)
           if (channel_active(chan)) {
             if ((((msign == '+') && (chan->mode_mns_prot & todo)) ||
                   ((msign == '-') && (chan->mode_pls_prot & todo))) &&
-                !glob_master(user) && !chan_master(user))
+                !glob_master(irc_user) && !chan_master(irc_user))
               add_mode(chan, msign == '+' ? '-' : '+', mmode, "");
             else if (reversing &&
                 ((msign == '+') || (chan->mode_pls_prot & todo)) &&

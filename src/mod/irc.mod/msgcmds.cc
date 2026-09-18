@@ -25,6 +25,8 @@
  */
 
 
+#include "irc_shared.h"
+
 #include "src/core_binds.h"
 #include <algorithm>
 using std::swap;
@@ -115,7 +117,10 @@ static int msg_pass(char *nick, char *host, struct userrec *u, char *par)
 
   putlog(LOG_CMDS, "*", "(%s!%s) !%s! PASS", nick, host, u->handle);
 
-  set_user(&USERENTRY_PASS, u, mynew);
+  if (!set_user(&USERENTRY_PASS, u, mynew)) {
+    notice(nick, "Password must be between 8 and 64 characters.", DP_HELP);
+    return BIND_RET_BREAK;
+  }
   bd::String msg;
   msg = bd::String::printf("%s '%s'.", mynew == old ? "Password set to:" : "Password changed to:", mynew);
   notice(nick, msg, DP_HELP);
@@ -291,7 +296,7 @@ static int msg_invite(char *nick, char *host, struct userrec *u, char *par)
   return BIND_RET_BREAK;
 }
 
-static void logc(const char *cmd, Auth *auth, char *chname, char *par)
+void logc(const char *cmd, Auth *auth, char *chname, char *par)
 {
   if (chname && chname[0])
     putlog(LOG_CMDS, "*", "(%s!%s) !%s! %s %c%s %s", auth->nick.c_str(), auth->host,
@@ -300,7 +305,6 @@ static void logc(const char *cmd, Auth *auth, char *chname, char *par)
     putlog(LOG_CMDS, "*", "(%s!%s) !%s! %c%s %s", auth->nick.c_str(), auth->host,
         auth->user ? auth->user->handle : "*", auth_prefix[0], cmd, par ? par : "");
 }
-#define LOGC(cmd) logc(cmd, a, chname, par)
   
 static int msg_authstart(char *nick, char *host, struct userrec *u, char *par)
 {
@@ -329,10 +333,20 @@ static int msg_authstart(char *nick, char *host, struct userrec *u, char *par)
     auth = new Auth(RfcString(nick), host, u);
 
   /* Send "auth." if they are recognized, otherwise "auth!" */
-  auth->Status(AUTH_PASS);
-  bd::String msg;
-  msg = bd::String::printf(STR("auth%s %s"), u ? "." : "!", conf.bot->nick);
-  privmsg(nick, msg, DP_HELP);
+  if (strlen(auth_key) && get_user(&USERENTRY_SECPASS, u)) {
+    putlog(LOG_CMDS, "*", STR("(%s!%s) !%s! AUTH"), nick, host, u->handle);
+    auth->Status(AUTH_HASH);
+    auth->MakeHash();
+    bd::String msg;
+    msg = bd::String::printf(STR("-Auth %s %s"), auth->rand, conf.bot->nick);
+    privmsg(nick, msg, DP_HELP);
+  } else {
+    /* no auth_key and/or no SECPASS, fall back to password prompt */
+    auth->Status(AUTH_PASS);
+    bd::String msg;
+    msg = bd::String::printf(STR("auth%s %s"), u ? "." : "!", conf.bot->nick);
+    privmsg(nick, msg, DP_HELP);
+  }
 
   return BIND_RET_BREAK;
 }
@@ -397,7 +411,7 @@ static int msg_pls_auth(char *nick, char *host, struct userrec *u, char *par)
     if (!auth || auth->Status() != AUTH_HASH)
       return BIND_RET_BREAK;
 
-    if (!strcmp(auth->hash, par)) { /* good hash! */
+    if (!strcmp(auth->hash, par) || !strcmp(auth->hash_md5, par)) { /* good hash! */
       AuthFinish(auth);
     } else { /* bad hash! */
       char s[300] = "";
@@ -471,7 +485,7 @@ static int msg_release(char *nick, char *host, struct userrec *u, char *par)
  * 0 if not.
  */
 
-static cmd_t C_msg[] =
+cmd_t C_msg[] =
 {
   {"auth?",		"",	(Function) msg_authstart,	NULL, LEAF},
   {"auth",		"",	(Function) msg_auth,		NULL, LEAF},
