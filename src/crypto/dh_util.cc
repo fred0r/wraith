@@ -1,4 +1,4 @@
-/* dh_util.c
+/* dh_util.cc
  *
  * Adapted from ZNC-fish
  */
@@ -9,40 +9,32 @@
 #include <bdlib/src/base64.h>
 #include "dh_util.h"
 
-static BIGNUM* b_prime = NULL;
-static BIGNUM* b_generator = NULL;
+/* Global instance for C API */
+static DH1080 *g_dh1080 = NULL;
 
-void DH1080_init() {
-  // ### new sophie-germain 1080bit prime number ###
-  //const char *prime1080 = "++ECLiPSE+is+proud+to+present+latest+FiSH+release+featuring+even+more+security+for+you+++shouts+go+out+to+TMG+for+helping+to+generate+this+cool+sophie+germain+prime+number++++/C32L";
-  // Base16: FBE1022E23D213E8ACFA9AE8B9DFADA3EA6B7AC7A7B7E95AB5EB2DF858921FEADE95E6AC7BE7DE6ADBAB8A783E7AF7A7FA6A2B7BEB1E72EAE2B72F9FA2BFB2A2EFBEFAC868BADB3E828FA8BADFADA3E4CC1BE7E8AFE85E9698A783EB68FA07A77AB6AD7BEB618ACF9CA2897EB28A6189EFA07AB99A8A7FA9AE299EFA7BA66DEAFEFBEFBF0B7D8B
-  // Base10: 12745216229761186769575009943944198619149164746831579719941140425076456621824834322853258804883232842877311723249782818608677050956745409379781245497526069657222703636504651898833151008222772087491045206203033063108075098874712912417029101508315117935752962862335062591404043092163187352352197487303798807791605274487594646923
+/* DH1080 class implementation */
+DH1080::DH1080() : prime_(NULL), generator_(NULL)
+{
   const char *prime1080 = "FBE1022E23D213E8ACFA9AE8B9DFADA3EA6B7AC7A7B7E95AB5EB2DF858921FEADE95E6AC7BE7DE6ADBAB8A783E7AF7A7FA6A2B7BEB1E72EAE2B72F9FA2BFB2A2EFBEFAC868BADB3E828FA8BADFADA3E4CC1BE7E8AFE85E9698A783EB68FA07A77AB6AD7BEB618ACF9CA2897EB28A6189EFA07AB99A8A7FA9AE299EFA7BA66DEAFEFBEFBF0B7D8B";
 
-  if (!BN_hex2bn(&b_prime, prime1080)) {
+  if (!BN_hex2bn(&prime_, prime1080)) {
     sdprintf("BAD PRIME");
     return;
   }
 
-  if (!BN_dec2bn(&b_generator, "2")) {
+  if (!BN_dec2bn(&generator_, "2")) {
     sdprintf("BAD GENERATOR");
     return;
   }
 }
 
-void DH1080_uninit() {
-  BN_clear_free(b_prime);
-  BN_clear_free(b_generator);
+DH1080::~DH1080()
+{
+  BN_clear_free(prime_);
+  BN_clear_free(generator_);
 }
 
-/**
- * @brief Encode a string using FiSH's base64 algorithm (from FiSH/mIRC)
- * @note Any = padding is removed, and an 'A' is added if no padding was needed
- * @param bd::String str The string to encode
- * @returns Encoded string
- * @note Adapated from FiSH code
- */
-bd::String fishBase64Encode(const bd::String& str) {
+bd::String DH1080::fish_base64_encode(const bd::String& str) {
   bd::String result(bd::base64Encode(str));
 
   // No padding, add an A on the end (base64-encoded NULL-terminator)
@@ -57,13 +49,7 @@ bd::String fishBase64Encode(const bd::String& str) {
   return result;
 }
 
-/**
- * @brief Decode a string using FiSH's base64 algorithm (from FiSH/mIRC)
- * @param bd::String str The string to decode
- * @returns Decoded data
- * @note Adapated from FiSH code
- */
-bd::String fishBase64Decode(const bd::String& str) {
+bd::String DH1080::fish_base64_decode(const bd::String& str) {
   bd::String temp(str);
 
   // Remove the 'A' NULL-terminator if present
@@ -78,25 +64,25 @@ bd::String fishBase64Decode(const bd::String& str) {
   return bd::base64Decode(temp);
 }
 
-
-void DH1080_gen(bd::String& privateKey, bd::String& publicKeyB64) {
+DH1080KeyPair DH1080::generate_keypair() const {
+  DH1080KeyPair result;
   DH *dh = NULL;
   const BIGNUM *priv_key, *pub_key;
 
   dh = DH_new();
 #if (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER >= 0x30500000L) || \
     (!defined(LIBRESSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L)
-  if (b_prime == NULL || b_generator == NULL ||
-      !DH_set0_pqg(dh, BN_dup(b_prime), NULL, BN_dup(b_generator)))
-    return;
+  if (prime_ == NULL || generator_ == NULL ||
+      !DH_set0_pqg(dh, BN_dup(prime_), NULL, BN_dup(generator_)))
+    return result;
 #else
-  dh->p = BN_dup(b_prime);
-  dh->g = BN_dup(b_generator);
+  dh->p = BN_dup(prime_);
+  dh->g = BN_dup(generator_);
 #endif
 
   if (!DH_generate_key(dh)) {
     DH_free(dh);
-    return;
+    return result;
   }
 
   // Get private key
@@ -107,35 +93,34 @@ void DH1080_gen(bd::String& privateKey, bd::String& publicKeyB64) {
   priv_key = dh->priv_key;
   pub_key = dh->pub_key;
 #endif
-  privateKey.resize(BN_num_bytes(priv_key), 0);
-  BN_bn2bin(priv_key, reinterpret_cast<unsigned char*>(privateKey.begin()));
+  result.private_key.resize(BN_num_bytes(priv_key), 0);
+  BN_bn2bin(priv_key, reinterpret_cast<unsigned char*>(result.private_key.begin()));
 
   // Get public key
   bd::String publicKey;
-  // Resize as the begin() modification won't update the internal length, but resize() will
   publicKey.resize(static_cast<size_t>(BN_num_bytes(pub_key)));
   BN_bn2bin(pub_key, reinterpret_cast<unsigned char*>(publicKey.begin()));;
 
   // base64 encode
-  publicKeyB64 = fishBase64Encode(publicKey);
+  result.public_key_b64 = fish_base64_encode(publicKey);
 
   DH_free(dh);
+  return result;
 }
 
-bool DH1080_comp(const bd::String privateKey, const bd::String theirPublicKeyB64, bd::String& sharedKey) {
+bool DH1080::compute_shared(const bd::String& privateKey, const bd::String& theirPublicKeyB64, bd::String& sharedKey) const {
   BIGNUM *b_myPrivkey = NULL, *b_HisPubkey = NULL;
   DH *dh = NULL;
-
 
   dh = DH_new();
 #if (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER >= 0x30500000L) || \
     (!defined(LIBRESSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L)
-  if (b_prime == NULL || b_generator == NULL ||
-      !DH_set0_pqg(dh, BN_dup(b_prime), NULL, BN_dup(b_generator)))
+  if (prime_ == NULL || generator_ == NULL ||
+      !DH_set0_pqg(dh, BN_dup(prime_), NULL, BN_dup(generator_)))
     return false;
 #else
-  dh->p = BN_dup(b_prime);
-  dh->g = BN_dup(b_generator);
+  dh->p = BN_dup(prime_);
+  dh->g = BN_dup(generator_);
 #endif
 
   // Setup my private key
@@ -148,7 +133,7 @@ bool DH1080_comp(const bd::String privateKey, const bd::String theirPublicKeyB64
 #endif
 
   // Prep their public key
-  bd::String theirPublicKey(fishBase64Decode(theirPublicKeyB64));
+  bd::String theirPublicKey(fish_base64_decode(theirPublicKeyB64));
   b_HisPubkey = BN_bin2bn(reinterpret_cast<const unsigned char*>(theirPublicKey.cbegin()), theirPublicKey.length(), NULL);
 
   // Compute the Shared key
@@ -157,7 +142,6 @@ bool DH1080_comp(const bd::String privateKey, const bd::String theirPublicKeyB64
   DH_free(dh);
   BN_clear_free(b_HisPubkey);
   if (len == static_cast<size_t>(-1)) {
-    // Bad pub key
     unsigned long err = ERR_get_error();
     sdprintf("** DH Error: %s", ERR_error_string(err, NULL));
     free(key);
@@ -173,10 +157,42 @@ bool DH1080_comp(const bd::String privateKey, const bd::String theirPublicKeyB64
   SHA256_Init(&c);
   SHA256_Update(&c, key, len);
   SHA256_Final(reinterpret_cast<unsigned char*>(SHA256Digest.begin()), &c);
-  sharedKey = fishBase64Encode(SHA256Digest);
+  sharedKey = fish_base64_encode(SHA256Digest);
 
+  OPENSSL_cleanse(key, len);
   free(key);
 
   return true;
 }
+
+/* C API wrappers */
+bd::String fishBase64Encode(const bd::String& str) {
+  return DH1080::fish_base64_encode(str);
+}
+
+bd::String fishBase64Decode(const bd::String& str) {
+  return DH1080::fish_base64_decode(str);
+}
+
+void DH1080_init() {
+  g_dh1080 = new DH1080();
+}
+
+void DH1080_uninit() {
+  delete g_dh1080;
+  g_dh1080 = NULL;
+}
+
+void DH1080_gen(bd::String& privateKey, bd::String& publicKeyB64) {
+  if (!g_dh1080) return;
+  DH1080KeyPair kp = g_dh1080->generate_keypair();
+  privateKey = kp.private_key;
+  publicKeyB64 = kp.public_key_b64;
+}
+
+bool DH1080_comp(const bd::String privateKey, const bd::String theirPublicKeyB64, bd::String& sharedKey) {
+  if (!g_dh1080) return false;
+  return g_dh1080->compute_shared(privateKey, theirPublicKeyB64, sharedKey);
+}
+
 /* vim: set sts=2 sw=2 ts=8 et: */

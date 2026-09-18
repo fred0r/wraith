@@ -140,12 +140,12 @@ int load_libcrypto() {
     }
   }
   if (!libcrypto_handle) {
-    fprintf(stderr, STR("Unable to find libcrypto\n"));
+    fprintf(stderr, "%s", STR("Unable to find libcrypto\n"));
     return(1);
   }
 
   if (load_symbols(libcrypto_handle)) {
-    fprintf(stderr, STR("\nMissing symbols for libcrypto (likely too old)\n"));
+    fprintf(stderr, "%s", STR("\nMissing symbols for libcrypto (likely too old)\n"));
     return(1);
   }
 
