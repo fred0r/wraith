@@ -37,6 +37,19 @@ bool reversing = 0;
 static bool massop = 0;
 static bool mdop_reversing = 1;
 
+/* Limit (+l/-l) bounce throttling. A bot must not reverse another bot's limit
+ * while the channel is still churning (rejoin/op-flap sets `reversing`), so a
+ * bounce is only emitted once the channel has been stable for LIMIT_SETTLE and
+ * at most once per LIMIT_MIN_INTERVAL. */
+#define LIMIT_SETTLE      60
+#define LIMIT_MIN_INTERVAL 90
+
+static bool limit_bounce_allowed(const struct chanset_t *chan)
+{
+  return (now - chan->channel.limit_stable >= LIMIT_SETTLE) &&
+         (now - chan->channel.limit_changed >= LIMIT_MIN_INTERVAL);
+}
+
 /* Pending cookie retry for stale userhosts (Option D).
  * When checkcookie() returns BC_HASH, we store the cookie data, send WHO
  * for opper+opped to refresh userhosts, and retry when WHO replies arrive. */
@@ -743,6 +756,8 @@ got_op(struct chanset_t *chan, memberlist *m, memberlist *mv)
   bool meop = me_op(chan);
   const bool was_op = chan_hasop(mv);
 
+  chan->channel.limit_stable = now;   /* op state changed: re-arm the +l/-l settle */
+
   // No need to punish someone who was already opped.
   if (massop && was_op)
     return;
@@ -902,6 +917,8 @@ static void
 got_deop(struct chanset_t *chan, memberlist *m, memberlist *mv, char *isserver)
 {
   const bool was_op = chan_hasop(mv);
+
+  chan->channel.limit_stable = now;   /* op state changed: re-arm the +l/-l settle */
 
   if (mdop_reversing && !was_op)
     return;
@@ -1659,9 +1676,10 @@ gotmode(char *from, char *msg)
               reversing = 1;
             if (msign == '-') {
               if (channel_active(chan)) {
-                if ((reversing) && (chan->channel.maxmembers != 0)) {
+                if ((reversing) && (chan->channel.maxmembers != 0) && limit_bounce_allowed(chan)) {
                   simple_snprintf(s, sizeof(s), "%d", chan->channel.maxmembers);
                   add_mode(chan, '+', 'l', s);
+                  chan->channel.limit_changed = now;
                 } else if ((chan->limit_prot != 0) && !glob_master(irc_user) && !chan_master(irc_user)) {
                   simple_snprintf(s, sizeof(s), "%d", chan->limit_prot);
                   add_mode(chan, '+', 'l', s);
@@ -1680,10 +1698,13 @@ gotmode(char *from, char *msg)
               if (channel_pending(chan))
                 break;
               if (((reversing) &&
-                    !(chan->mode_pls_prot & CHANLIMIT)) ||
+                    !(chan->mode_pls_prot & CHANLIMIT) &&
+                    limit_bounce_allowed(chan)) ||
                   ((chan->mode_mns_prot & CHANLIMIT) && 
-                   !glob_bot(irc_user) && !glob_master(irc_user) && !chan_master(irc_user)))
+                   !glob_bot(irc_user) && !glob_master(irc_user) && !chan_master(irc_user))) {
                 add_mode(chan, '-', 'l', "");
+                chan->channel.limit_changed = now;
+              }
               if ((chan->limit_prot != chan->channel.maxmembers) && (chan->mode_pls_prot & CHANLIMIT) && (chan->limit_prot != 0) && 
                   !glob_bot(irc_user) && !glob_master(irc_user) && !chan_master(irc_user)) {
                 simple_snprintf(s, sizeof(s), "%d", chan->limit_prot);

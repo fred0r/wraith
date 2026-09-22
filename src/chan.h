@@ -176,6 +176,8 @@ struct chan_t {
   time_t invite_retry;         /* when to re-request an invite while waiting to join a +i chan */
   int invite_retry_ct;         /* consecutive invite re-requests (bounded burst)             */
   time_t invite_pull;          /* last time an opped bot pulled its group peers in           */
+  time_t limit_stable;         /* last membership/op change; +l/-l bounce must settle first  */
+  time_t limit_changed;        /* last time we emitted a +l/-l on this channel               */
   time_t last_eI;      /* this will stop +e and +I from being checked over and over if the bot is stuck in a
                         * -o+o loop for some reason, hence possibly causing a SENDQ kill
                         */
@@ -375,6 +377,7 @@ struct chanset_t {
 #define CHAN_JOINING        BIT7	/* attempting to join, dont flood with JOIN #chan */
 #define CHAN_JUPED          BIT8	/* Is channel juped                   */
 #define CHAN_STOP_CYCLE     BIT9	/* Some efnetservers have defined NO_CHANOPS_WHEN_SPLIT */
+#define CHAN_PARTING        BIT10	/* a deliberate (group-change) PART is in flight */
 
 /* prototypes */
 
@@ -388,6 +391,7 @@ struct chanset_t {
 #define channel_pending(chan)  (chan->ircnet_status & CHAN_PEND)
 #define channel_juped(chan) (chan->ircnet_status & CHAN_JUPED)
 #define channel_stop_cycle(chan) (chan->ircnet_status & CHAN_STOP_CYCLE)
+#define channel_parting(chan) (chan->ircnet_status & CHAN_PARTING)
 
 #define channel_dynamicexempts(chan) (chan->status & CHAN_DYNAMICEXEMPTS)
 #define channel_nouserexempts(chan) (chan->status & CHAN_NOUSEREXEMPTS)

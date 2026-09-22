@@ -559,9 +559,7 @@ var_get_gdata(const char *name) {
 void distribute_authkey_var(int except)
 {
   for (int i = 0; i < dcc_total; i++) {
-    if (i == except || !dcc[i].type || dcc[i].type != &DCC_BOT)
-      continue;
-    if (!(dcc[i].hub || (dcc[i].user && (dcc[i].user->flags & BOT_CHANHUB))))
+    if (i == except || !peer_allowed_auth_values(i))
       continue;
 
     botnet_send_var_value(i, "auth-key", auth_key);

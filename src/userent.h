@@ -10,12 +10,15 @@ void init_userent(void);
 
 /*
  * Set before a userfile stream is built: `peer_allowed` says whether the
- * destination may receive SECPASS/auth-key (hub or +c chathub). The on-disk
- * `.u` (hub) always allows.
+ * destination may receive SECPASS/auth-key (hub, +c chathub, or a localhub
+ * that must forward them). The on-disk `.u` (hub) always allows.
  */
 void userfile_write_context(bool peer_allowed);
 /* True when the current userfile stream targets a peer that may hold SECPASS/
  * auth-key. Valid only while a stream is being built. */
 bool userfile_peer_allowed(void);
+/* True when connection idx may receive SECPASS/auth-key: a hub, a +c chathub,
+ * or a localhub that has to forward them to +c bots below it. */
+bool peer_allowed_auth_values(int idx);
 
 #endif /* !_USERENT_H */

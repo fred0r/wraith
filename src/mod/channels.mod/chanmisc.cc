@@ -969,6 +969,8 @@ static void init_channel(struct chanset_t *chan, bool reset)
   chan->channel.members = 0;
   chan->channel.splitmembers = 0;
   chan->channel.lonely_whined = 0;
+  chan->channel.limit_stable = now;   /* let the limit settle after (re)joining */
+  chan->channel.limit_changed = 0;
 
   if (!reset)
     my_setkey(chan, NULL);

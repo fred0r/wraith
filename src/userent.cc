@@ -714,9 +714,10 @@ static void secpass_display(int idx, struct user_entry *e, struct userrec *u)
 
 /* --- SECPASS delivery scoping -------------------------------------------
  * SECPASS stays plaintext in RAM, on the botnet (link-encrypted) and in `.u`;
- * it is only delivered to hubs and +c (BOT_CHANHUB) bots - the peers that can
- * answer a login challenge. The write context records whether the current
- * userfile stream targets such a peer. */
+ * it is only delivered to hubs, +c (BOT_CHANHUB) bots and localhubs that have
+ * to forward it - the peers that can answer a login challenge or relay it to
+ * one below them. The write context records whether the current userfile
+ * stream targets such a peer. */
 static bool uf_peer_allowed = true;
 
 void userfile_write_context(bool peer_allowed)
@@ -727,6 +728,20 @@ void userfile_write_context(bool peer_allowed)
 bool userfile_peer_allowed(void)
 {
   return uf_peer_allowed;
+}
+
+bool peer_allowed_auth_values(int idx)
+{
+  if (idx < 0 || idx >= dcc_total || !dcc[idx].type || !(dcc[idx].type->flags & DCT_BOT))
+    return false;
+
+  if (dcc[idx].hub || (dcc[idx].user && (dcc[idx].user->flags & BOT_CHANHUB)))
+    return true;
+
+  /* A localhub that is neither a hub nor +c still has to carry SECPASS/auth-key
+   * so its +c children can receive them. */
+  const tand_t *bot = findbot(dcc[idx].nick);
+  return bot && bot->localhub;
 }
 
 bool secpass_set(struct userrec *u, struct user_entry *e, void *buf)

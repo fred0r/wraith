@@ -289,6 +289,7 @@ static memberlist *newmember(struct chanset_t *chan, const char *nick)
   }
 
   ++(chan->channel.members);
+  chan->channel.limit_stable = now;   /* membership changed: re-arm the +l/-l settle */
   n->floodtime = new bd::HashTable<flood_t, time_t>;
   n->floodnum  = new bd::HashTable<flood_t, int>;
   (*chan->channel.hashed_members)[*n->rfc_nick] = n;
@@ -3104,13 +3105,18 @@ static int gotpart(char *from, char *msg)
     struct userrec *u = (m && m->user) ? m->user : get_user_by_host(from);
 
     if (!channel_active(chan) && !channel_joining(chan)) {
-      /* Don't warn during coordinated cycling — the channel is
-       * intentionally +inactive with a pending jointime. */
-      if (!chan->channel.jointime)
-        putlog(LOG_ERRORS, "*", "confused bot: guess I'm on %s and didn't realize it", chan->dname);
-      chan->ircnet_status |= CHAN_ACTIVE;
-      chan->ircnet_status &= ~(CHAN_PEND | CHAN_JOINING);
-      reset_chan_info(chan);
+      /* A deliberate (group-change) part clears the channel and marks
+       * CHAN_PARTING; our own PART echo must not trigger the confused-bot
+       * recovery (which would warn and re-PART). */
+      if (!channel_parting(chan)) {
+        /* Don't warn during coordinated cycling — the channel is
+         * intentionally +inactive with a pending jointime. */
+        if (!chan->channel.jointime)
+          putlog(LOG_ERRORS, "*", "confused bot: guess I'm on %s and didn't realize it", chan->dname);
+        chan->ircnet_status |= CHAN_ACTIVE;
+        chan->ircnet_status &= ~(CHAN_PEND | CHAN_JOINING);
+        reset_chan_info(chan);
+      }
     }
     if (u && u->bot) {
       chan->role_rebalance_cookie = 0;
@@ -3127,6 +3133,7 @@ static int gotpart(char *from, char *msg)
       irc_log(chan, "Part: %s (%s)", nick, uhost);
     /* If it was me, all hell breaks loose... */
     if (match_my_nick(nick)) {
+      chan->ircnet_status &= ~CHAN_PARTING;
       check_rejoin(chan);
     } else
       check_lonely_channel(chan);

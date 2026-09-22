@@ -1320,10 +1320,7 @@ shareout_secpass(struct userrec *u, int except, const char *format, ...)
   va_end(va);
 
   for (int i = 0; i < dcc_total; i++) {
-    if (i == except || !dcc[i].type || !(dcc[i].type->flags & DCT_BOT))
-      continue;
-
-    if (!(dcc[i].hub || (dcc[i].user && (dcc[i].user->flags & BOT_CHANHUB))))
+    if (i == except || !peer_allowed_auth_values(i))
       continue;
 
     ResyncBuffer::queue_bot(dcc[i].nick, s);
@@ -1619,8 +1616,7 @@ stream_send_users(int idx)
     old = 2;
   /* Translate server-use-ssl for peers too old to understand mode 2. */
   int peer_numver = (idx != -1 && dcc[idx].u.bot) ? dcc[idx].u.bot->numver : -1;
-  userfile_write_context(idx != -1 &&
-      (dcc[idx].hub || (dcc[idx].user && (dcc[idx].user->flags & BOT_CHANHUB))));
+  userfile_write_context(peer_allowed_auth_values(idx));
   stream_writeuserfile(stream, userlist, old, peer_numver);
   stream.seek(0, SEEK_SET);
   dprintf(idx, "s ls\n");
@@ -1660,8 +1656,7 @@ start_sending_users(int idx)
   EncryptedStream stream(salt1);
   /* Translate server-use-ssl for peers too old to understand mode 2. */
   int peer_numver = (idx != -1 && dcc[idx].u.bot) ? dcc[idx].u.bot->numver : -1;
-  userfile_write_context(idx != -1 &&
-      (dcc[idx].hub || (dcc[idx].user && (dcc[idx].user->flags & BOT_CHANHUB))));
+  userfile_write_context(peer_allowed_auth_values(idx));
   stream_writeuserfile(stream, userlist, old, peer_numver);
   stream.setFlags(ENC_KEEP_NEWLINES|ENC_AES_256_ECB|ENC_BASE64_BROKEN|ENC_NO_HEADER);
   if (stream.writeFile(share_file)) {

@@ -176,7 +176,8 @@ static int check_bind_raw(char *from, char *code, char *msg)
         bool isValidCipherText;
         char *p = strchr(from, '!');
         const bool target_is_chan = strchr(CHANMETA, target[0]);
-        bd::String ciphertext(colon), sharedKey, nick(from, p - from), key_target;
+        bd::String ciphertext(colon), sharedKey,
+            nick(from, p ? static_cast<size_t>(p - from) : strlen(from)), key_target;
         const bool isCBC = (colon[4] == '*');
 
         // If this is a channel msg, decrypt with the channel key
@@ -194,7 +195,10 @@ static int check_bind_raw(char *from, char *code, char *msg)
         } else {
           struct userrec *u = get_user_by_host(from);
           if (u) {
-            sharedKey = static_cast<char*>(get_user(&USERENTRY_SECPASS, u));
+            // Absent SECPASS must not be assigned to bd::String (strlen(NULL)).
+            char *sp = static_cast<char *>(get_user(&USERENTRY_SECPASS, u));
+            if (sp)
+              sharedKey = sp;
           }
         }
 
@@ -206,7 +210,7 @@ static int check_bind_raw(char *from, char *code, char *msg)
           // Does the decrypted text make sense? If not, the key is probably invalid, reset it.
           isValidCipherText = true;
           for (size_t i = 0; i < decrypted.length(); ++i) {
-            if (!isprint(decrypted[i])) {
+            if (!isprint(static_cast<unsigned char>(decrypted[i]))) {
               isValidCipherText = false;
               break;
             }

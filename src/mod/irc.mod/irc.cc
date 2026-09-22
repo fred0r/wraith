@@ -1181,6 +1181,7 @@ killmember(struct chanset_t *chan, const char *nick, bool cacheMember)
   }
 
   --chan->channel.members;
+  chan->channel.limit_stable = now;   /* membership changed: re-arm the +l/-l settle */
 
   /* The following two errors should NEVER happen. We will try to correct
    * them though, to keep the bot from crashing.
@@ -1285,6 +1286,11 @@ void
 reset_chan_info(struct chanset_t *chan)
 {
   if (!chan) return;
+
+  /* A deliberate (group-change) PART is already in flight; don't emit a
+   * duplicate PART or reset state while we wait for the echo. */
+  if (channel_parting(chan))
+    return;
 
   if (!chan->name[0])
     strlcpy(chan->name, chan->dname, sizeof(chan->name));

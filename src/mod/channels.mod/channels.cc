@@ -301,6 +301,9 @@ check_slowjoinpart(struct chanset_t *chan)
      * destroyed the entry, causing got_cset() to recreate it from scratch
      * with chanset_default settings — losing any per-channel overrides. */
     clear_channel(chan, 1);
+    /* clear_channel() zeroed ircnet_status; mark the deliberate part so gotpart()
+     * does not "recover"/re-PART when our own PART echoes back. */
+    chan->ircnet_status |= CHAN_PARTING;
     return 1;		/* if we keep looping, we'll segfault. */
   /* slowjoin */
   } else if ((chan->channel.jointime) && (chan->channel.jointime < now)) {
