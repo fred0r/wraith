@@ -1099,6 +1099,13 @@ dcc_chat_pass(int idx, char *buf, int atr)
           return;
         }
 
+        if (!link_type_offered(type)) {
+          putlog(LOG_WARN, "*", STR("%s attempted to negotiate a disabled encryption. (%d)"), dcc[idx].nick, type);
+          killsock(dcc[idx].sock);
+          lostdcc(idx);
+          return;
+        }
+
         sdprintf(STR("Using '%s' (%d/%d) for link with %s"), enclink[i].name, enclink[i].type, i, dcc[idx].nick);
 
         if (buf[0]) {
@@ -2010,7 +2017,7 @@ dcc_telnet_pass(int idx, int atr)
 
       /* Build cipher list */
       for (i = 0; enclink[i].name; i++) {
-        if (enclink[i].type == LINK_CLEARTEXT && !link_cleartext) continue;
+        if (!link_type_offered(enclink[i].type)) continue;
         simple_snprintf(&buf[strlen(buf)], sizeof(buf) - strlen(buf), "%d ", enclink[i].type);
       }
 
