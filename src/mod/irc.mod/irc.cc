@@ -590,7 +590,7 @@ sdprintf("hash: %s", hash);
          hash[HASH_INDEX3(i)] == cookie_index[2])) {
       /* Hash matched -- now check time */
       const time_t optime = atol(ts);
-      if ((((now + timesync) % 10000000) - optime) > 180)
+      if ((((now + timesync) % 10000000) - optime) > 3900)
         return BC_SLACK;
 
       //Only check on the first cookie
