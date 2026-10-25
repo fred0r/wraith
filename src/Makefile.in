@@ -40,6 +40,7 @@ OBJS = auth.So \
 	dl.So \
 	egg_timer.So \
 	enclink.So \
+	enclink_util.So \
 	EncryptedStream.So \
 	flags.So \
 	garble.So \
@@ -80,6 +81,7 @@ OBJS = auth.So \
 	mod/share.mod/share.So \
 	mod/transfer.mod/transfer.So \
 	mod/update.mod/update.So \
+	mod/update.mod/update_stream.So \
 	compat/dn_expand.o \
 	compat/snprintf.o \
 	compat/memmem.o \

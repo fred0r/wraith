@@ -58,6 +58,7 @@ static void start_sending_binary(int, bool);
 void finish_update_stream(int idx, bd::Stream& stream);
 
 #include "update.h"
+#include "update_stream.h"
 
 extern struct dcc_table DCC_FORK_SEND, DCC_GET;
 
@@ -239,25 +240,18 @@ static void update_stream_abort(int idx, const char *reason)
 
 static void update_stream_line(int idx, char *par) {
   char *size = newsplit(&par);
+  bd::String decoded;
+  const UpdateChunkResult result = parse_update_chunk(size, par, decoded);
 
-  if (!size[0] || !par[0]) {
+  if (result == UPDATE_CHUNK_MISSING) {
     update_stream_abort(idx, "missing binary stream chunk");
     return;
   }
-
-  errno = 0;
-  char *end = NULL;
-  const unsigned long chunk_len = strtoul(size, &end, 10);
-  const size_t par_len = strlen(par);
-
-  if (errno || end == size || *end || chunk_len != par_len) {
+  if (result == UPDATE_CHUNK_BAD_SIZE) {
     update_stream_abort(idx, "bad binary stream chunk size");
     return;
   }
-
-  bd::String chunk(par, chunk_len);
-  bd::String decoded;
-  if (!bd::base64Decode(chunk, decoded, false)) {
+  if (result == UPDATE_CHUNK_BAD_ENCODING) {
     update_stream_abort(idx, "bad binary stream encoding");
     return;
   }
@@ -429,9 +423,9 @@ static void stream_continue(void *)
   while (!stream_state.stream.eof() &&
          chunks < STREAM_CHUNKS_PER_TICK &&
          !sock_has_data(SOCK_DATA_OUTGOING, dcc[idx].sock)) {
-    bd::String data = stream_state.stream.read(1024);
     bd::String buf;
-    if (!bd::base64Encode(data, buf)) {
+    bool at_eof = false;
+    if (!next_update_chunk(stream_state.stream, buf, at_eof)) {
       putlog(LOG_ERRORS, "*", "Unable to encode binary stream to %s", dcc[idx].nick);
       dcc[idx].status &= ~STAT_SENDINGU;
       UpdateModule::set_bupdating(false);

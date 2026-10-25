@@ -25,6 +25,7 @@
 
 #include "common.h"
 #include "enclink.h"
+#include "enclink_util.h"
 #include "dcc.h"
 #include "net.h"
 #include "misc.h"
@@ -44,73 +45,6 @@
 #include <limits>
 #include <string>
 #include <stdarg.h>
-
-static bool link_random_key(char out[ENC_KEY_LEN + 1])
-{
-  unsigned char raw[24];
-
-  if (RAND_bytes(raw, sizeof(raw)) != 1)
-    return false;
-
-  bd::String encoded;
-  if (!bd::base64Encode(
-          bd::String(reinterpret_cast<const char *>(raw), sizeof(raw)),
-          encoded)) {
-    OPENSSL_cleanse(raw, sizeof(raw));
-    return false;
-  }
-  OPENSSL_cleanse(raw, sizeof(raw));
-
-  if (encoded.length() != ENC_KEY_LEN)
-    return false;
-
-  memcpy(out, encoded.c_str(), ENC_KEY_LEN);
-  out[ENC_KEY_LEN] = '\0';
-  return true;
-}
-
-static bool link_random_seed(int& seed)
-{
-  uint32_t value = 0;
-
-  if (RAND_bytes(reinterpret_cast<unsigned char *>(&value), sizeof(value)) != 1)
-    return false;
-
-  value &= 0x7ffffffeU;
-  if (value == 0)
-    value = 1;
-
-  seed = static_cast<int>(value);
-  return true;
-}
-
-static bool parse_link_seed(const char *text, int& seed)
-{
-  if (!text)
-    return false;
-
-  while (*text == ' ' || *text == '\t' || *text == '\r')
-    ++text;
-
-  if (!*text)
-    return false;
-
-  errno = 0;
-  char *end = NULL;
-  long value = strtol(text, &end, 10);
-
-  if (errno || end == text)
-    return false;
-
-  while (*end == ' ' || *end == '\t' || *end == '\r')
-    ++end;
-
-  if (*end || value < 0 || value > INT_MAX)
-    return false;
-
-  seed = static_cast<int>(value);
-  return true;
-}
 
 bool link_type_offered(int type)
 {
@@ -664,11 +598,8 @@ void link_send(int idx, const char *format, ...)
   va_list va;
 
   va_start(va, format);
-  bd::String message = bd::String::vprintf(format, va);
+  bd::String message = format_link_message_va(format, va);
   va_end(va);
-
-  if (message.length())
-    remove_crlf(message.mdata());
 
   dprintf(-dcc[idx].sock, STR("neg! %s\n"), message.c_str());
 }
