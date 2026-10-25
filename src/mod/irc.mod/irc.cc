@@ -481,7 +481,13 @@ void makecookie(char *out, size_t len, const char *chname, const memberlist* opp
   const char* hash2 = m2 ? cookie_hash(chname, opper, m2, &ts[4], randstring, key) : NULL;
   const char* hash3 = m3 ? cookie_hash(chname, opper, m3, &ts[4], randstring, key) : NULL;
   bd::String cookie = encrypt_string(MD5(key), bd::String(cookie_clear));
-  cookie = bd::base64Encode(cookie);
+  bd::String encoded_cookie;
+  if (!bd::base64Encode(cookie, encoded_cookie)) {
+    if (out && len)
+      out[0] = '\0';
+    return;
+  }
+  cookie = encoded_cookie;
 #ifdef DEBUG
 sdprintf("key: %s", key);
 sdprintf("cookie_clear: %s", cookie_clear);
@@ -533,16 +539,41 @@ void counter_clear(const char* botnick) {
 int checkcookie(const char *chname, const memberlist* opper, const memberlist* opped, const char *cookie, int indexHint) {
 #define HOST(_x) (6 + (_x) + ((hashes << 1) + hashes)) /* x + (hashes * 3) */
 #define SALT(_x) (1 + (_x) + ((hashes << 1) + hashes)) /* x + (hashes * 3) */
-  /* How many hashes are in the cookie? */
-  const size_t hashes = cookie[3] == '!' ? 1 : (cookie[6] == '!' ? 2 : 3);
+  if (!cookie)
+    return BC_HASH;
+
+  const size_t cookie_len = strlen(cookie);
+  size_t hashes = 0;
+
+  /* The hash count is taken from the first '!' marker. Validate the
+   * minimum prefix before indexing so a short MODE cookie cannot read
+   * past the string. */
+  if (cookie_len > 3 && cookie[3] == '!')
+    hashes = 1;
+  else if (cookie_len > 6 && cookie[6] == '!')
+    hashes = 2;
+  else if (cookie_len > 9 && cookie[9] == '!')
+    hashes = 3;
+  else
+    return BC_HASH;
+
+  if (cookie_len <= HOST(0))
+    return BC_HASH;
 
   char key[150] = "";
   const char *randstring = &cookie[SALT(0)];
 
   cookie_key(key, sizeof(key), randstring, opper, chname);
 
-  bd::String ciphertext = bd::base64Decode((char*) &cookie[HOST(0)]);
+  bd::String encoded_cookie(&cookie[HOST(0)]);
+  bd::String ciphertext;
+  if (!bd::base64Decode(encoded_cookie, ciphertext, false))
+    return BC_HASH;
+
   bd::String cleartext = decrypt_string(MD5(key), ciphertext);
+  if (cleartext.length() < 4 + 7 + 1)
+    return BC_HASH;
+
   char ts[8] = "";
   strlcpy(ts, cleartext.c_str() + 4, sizeof(ts));
   unsigned long counter = base64_to_int(cleartext.c_str() + 4 + 7);
@@ -553,10 +584,8 @@ int checkcookie(const char *chname, const memberlist* opper, const memberlist* o
   bd::String handle;
   if (conf.bot->u != opper->user) {
     handle = opper->user->handle;
-    if (bot_counters.contains(handle))
-      last_counter = bot_counters[handle];
-    else
-      last_counter = 0;
+    if (const unsigned long *last = bot_counters.try_get(handle))
+      last_counter = *last;
   }
 
 #ifdef DEBUG
