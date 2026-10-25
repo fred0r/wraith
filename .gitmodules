@@ -1,3 +1,4 @@
 [submodule "lib/bdlib"]
 	path = lib/bdlib
 	url = https://github.com/fred0r/bdlib.git
+	branch = bastelage
