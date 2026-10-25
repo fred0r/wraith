@@ -15,7 +15,7 @@ BINEXEC = wraith
 STATICMAKEFILES = lib/Makefile src/Makefile Makefile
 CONFIGFILES = build/config.cache build/config.log build/config.status src/config.h src/buildinfo.h
 
-DISTROFILES = README.md LICENSE build doc scripts lib Makefile.in build.sh configure src BSDmakefile
+DISTROFILES = README.md LICENSE build doc scripts lib tests Makefile.in build.sh configure src BSDmakefile
 EXCLUDES = $(CONFIGFILES) $(STATICMAKEFILES) \
            build/confdefs.h build/autotools/configure build/autotools/aclocal.m4 \
            build/autotools/autom4te.cache src/.defs
@@ -62,18 +62,34 @@ MAKE_UTILS = $(MAKE) 'MAKE=$(MAKE)' 'CXX=$(CXX)' 'CC=$(CC)' 'STRIP=touch' 'INCLU
 'CCDEPMODE=$(CCDEPMODE)' 'DEBLDFLAGS=$(DEBLDFLAGS)' \
 'CXXFLAGS=$(CXXFLAGS) $(DEBCXXFLAGS)' 'CFLGS=$(CFLGS) $(DEBCXXFLAGS)' 'LIBS=$(LIBS)' 'LD=$(LD_DEBUG) -g'
 
-.PHONY: checkclean.dynamic checkclean.debug lib wraith lib.debug debug test general sorthelp sort indent tar distrib distclean clean cleanutils test all dynamic tags libdefs
+.PHONY: checkclean.dynamic checkclean.debug lib wraith lib.debug debug test test-bdlib test-wraith test-asan general sorthelp sort indent tar distrib distclean clean cleanutils test all dynamic tags libdefs
 
 all: dynamic
 
-test:
-	+@cd lib && $(MAKE) test
+test: test-bdlib test-wraith
+
+test-bdlib:
+	+@pkg-config --exists 'cppunit >= 1.14.0' || \
+		{ echo "cppunit >= 1.14.0 is required for tests (libcppunit-dev)"; exit 1; }
+	+@cd lib/bdlib && $(MAKE) UnitRunner \
+		CPPFLAGS="$(CPPFLAGS) $$(pkg-config --cflags cppunit)" \
+		LIBS="$$(pkg-config --libs cppunit)"
+	+@cd lib/bdlib && ./UnitRunner
+
+test-wraith:
+	+@$(MAKE) -C tests test 'CXX=$(CXX)' 'CXXFLAGS=$(CXXFLAGS)' \
+		'LDFLAGS=$(LDFLAGS)' 'LIBS=$(LIBS)'
+
+test-asan:
+	+@$(MAKE) -C tests test-asan 'CXX=$(CXX)' 'CXXFLAGS=$(CXXFLAGS)' \
+		'LDFLAGS=$(LDFLAGS)' 'LIBS=$(LIBS)'
 
 cleanutils:
 	@rm -f src/sorthelp
 
 clean:  cleanutils
 	+@cd src && $(MAKE) clean
+	+@$(MAKE) -C tests clean
 	-+@cd lib && $(MAKE) clean
 	@rm -f src/.defs/*.stamp
 	@rm -f $(BINEXEC) build/stamp.* *~ src/*~ configure.temp .mangled stamp.*
@@ -168,7 +184,7 @@ src/.defs/exports: Makefile \
 
 general: libdefs src/.defs/exports
 
-.NOTPARALLEL: checkclean.dynamic checkclean.debug
+.NOTPARALLEL: checkclean.dynamic checkclean.debug test test-bdlib test-wraith
 
 checkclean.dynamic:
 	@(if test -f build/stamp.debug; then \
