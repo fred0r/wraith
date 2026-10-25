@@ -42,21 +42,20 @@
 
 extern cmd_t 		C_dcc[];
 
-static bind_table_t *BT_away = NULL, *BT_dcc = NULL;
-static bind_table_t *BT_note = NULL;
-static bind_table_t *BT_bot = NULL, *BT_nkch = NULL, *BT_chon = NULL;
+static bind_table_t *BT_dcc = NULL;
+static bind_table_t *BT_bot = NULL, *BT_chon = NULL;
 static bind_table_t *BT_time = NULL;
 
 void core_binds_init()
 {
-        BT_away = bind_table_add("away", 3, "sis", MATCH_MASK, BIND_STACKABLE);
+        bind_table_add("away", 3, "sis", MATCH_MASK, BIND_STACKABLE);
         BT_bot = bind_table_add("bot", 3, "sss", MATCH_EXACT, 0);
         BT_chon = bind_table_add("chon", 2, "si", MATCH_MASK | MATCH_FLAGS, BIND_STACKABLE);
         BT_dcc = bind_table_add("dcc", 2, "is", MATCH_PARTIAL | MATCH_FLAGS, 0);
 	bzero(&cmdlist, 500);
         add_builtins("dcc", C_dcc);
-        BT_nkch = bind_table_add("nkch", 2, "ss", MATCH_MASK, BIND_STACKABLE);
-        BT_note = bind_table_add("note", 3 , "sss", MATCH_EXACT, 0);
+        bind_table_add("nkch", 2, "ss", MATCH_MASK, BIND_STACKABLE);
+        bind_table_add("note", 3 , "sss", MATCH_EXACT, 0);
 	BT_time = bind_table_add("time", 5, "iiiii", MATCH_MASK, BIND_STACKABLE);
 }
 
