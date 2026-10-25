@@ -666,6 +666,7 @@ void remove_channel(struct chanset_t *chan)
    }
    delete chan->bot_roles;
    delete chan->role_bots;
+   delete chan->pending_bot_joins;
    delete static_cast<Channel *>(chan);
 }
 

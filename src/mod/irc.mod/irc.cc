@@ -1943,6 +1943,8 @@ void rebalance_roles_chan(struct chanset_t* chan)
   /* Set my own roles */
   chan->role = (*chan->bot_roles)[conf.bot->nick];
   free(bot_bits);
+  if (chan->bot_roles->size() > 0)
+    chan->initial_bot_join = false;
   /* Reset to tand_updates which ensures a trigger on unlink/link. */
   chan->role_rebalance_cookie = tand_updates;
 }

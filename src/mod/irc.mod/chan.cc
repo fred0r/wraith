@@ -2173,12 +2173,33 @@ static int got315(char *from, char *msg)
     me->tried_getuser = 1;
     if (!me->joined)
       me->joined = now;				/* set this to keep the whining masses happy */
+
+    if (chan->initial_bot_join) {
+      for (memberlist* member = chan->channel.member; member && member->nick[0];
+           member = member->next) {
+        if (member == me || !member_getuser(member) || !member->user ||
+            !member->user->bot)
+          continue;
+        if (!chan->pending_bot_joins ||
+            !chan->pending_bot_joins->try_get(RfcString(member->nick))) {
+          chan->initial_bot_join = false;
+          break;
+        }
+      }
+      if (chan->pending_bot_joins)
+        chan->pending_bot_joins->clear();
+    }
+
     rebalance_roles_chan(chan);
     if (me_op(chan))
       recheck_channel(chan, 2);
-    else if (chan->channel.members == 1)
+
+    if (me_op(chan) && ((chan->role & ROLE_OP) || chan->initial_bot_join))
+      op_fanout(chan, true);
+
+    if (!me_op(chan) && chan->channel.members == 1)
       chan->ircnet_status |= CHAN_STOP_CYCLE;
-    else if (chan->channel.do_opreq) {
+    else if (!me_op(chan) && chan->channel.do_opreq) {
       request_op(chan);
     }
   }
@@ -2693,7 +2714,8 @@ static void op_delegation_flush(void *data);
 void op_fanout(struct chanset_t *chan, bool allow_burst)
 {
   if (!chan || !channel_active(chan) || channel_pending(chan) ||
-      !shouldjoin(chan) || !me_op(chan) || !(chan->role & ROLE_OP))
+      !shouldjoin(chan) || !me_op(chan) ||
+      (!(chan->role & ROLE_OP) && !chan->initial_bot_join))
     return;
 
   const unsigned int cap = cookie_queue_capacity();
@@ -2831,6 +2853,13 @@ static int gotjoin(char *from, char *chname)
   strlcpy(uhost, from, sizeof(buf));
   nick = splitnick(&uhost);
 
+  if (chan && shouldjoin(chan) && channel_pending(chan) &&
+      chan->initial_bot_join && !match_my_nick(nick)) {
+    if (!chan->pending_bot_joins)
+      chan->pending_bot_joins = new bd::HashTable<RfcString, bool>;
+    (*chan->pending_bot_joins)[RfcString(nick)] = true;
+  }
+
   if (!chan || (chan && !shouldjoin(chan) && !chan->channel.parttime)) {
     if (match_my_nick(nick)) {
       putlog(LOG_WARN, "*", "joined %s but didn't want to!", chname);
@@ -2924,6 +2953,13 @@ static int gotjoin(char *from, char *chname)
             irc_log(chan, "Joined.");
 	  if (!match_my_nick(chname))
  	    reset_chan_info(chan);
+          if (!splitjoin && channel_pending(chan)) {
+            chan->initial_bot_join = true;
+            if (!chan->pending_bot_joins)
+              chan->pending_bot_joins = new bd::HashTable<RfcString, bool>;
+            else
+              chan->pending_bot_joins->clear();
+          }
 	} else {
           irc_log(chan, "Join: %s (%s)", nick, uhost);
           detect_chan_flood(m, from, chan, FLOOD_JOIN);
@@ -3022,14 +3058,17 @@ static int gotjoin(char *from, char *chname)
           }
           /* Bots excluded from chk_autoop; op them directly so they don't
            * have to wait for the 60s check_expired_chanstuff cycle
-           * (irc_minutely, irc.cc). Only the bot assigned ROLE_OP for this
-           * channel ops, to prevent all bots from sending +o simultaneously. */
+           * (irc_minutely, irc.cc). Normally only the bot assigned ROLE_OP
+           * for this channel ops, to prevent all bots from sending +o
+           * simultaneously. The initial bot in a fresh channel may fan out
+           * before role assignment completes. */
           /* Refresh the ROLE_OP election first so a bot joining right after
            * the first op is opped now instead of on the 10s timer. */
           rebalance_roles_chan(chan);
           if (!chan_hasop(m) && !chan_sentop(m) && is_bot(m->user) && chk_op(fr, chan) &&
-              (chan->role & ROLE_OP)) {
+              ((chan->role & ROLE_OP) || chan->initial_bot_join)) {
             do_op(m, chan, 0, 0);
+            flush_mode(chan, QUICK);
           }
           /* If we're leaving due to group change, op joining bots before we go.
            * chk_autoop returns 0 for bots, so the autoop path above won't fire.

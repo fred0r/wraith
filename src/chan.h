@@ -328,6 +328,10 @@ struct chanset_t {
   // My role bitmask
   int role;
 
+  // Initial bot join tracking, independent of channel modes.
+  bool initial_bot_join;
+  bd::HashTable<RfcString, bool> *pending_bot_joins;
+
   unsigned long role_rebalance_cookie;
 
   int op_delegation_flush_timer;
