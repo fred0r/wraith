@@ -617,7 +617,7 @@ readconf(const char *fname, int bits)
   bd::String line, option;
   unsigned short hublevel = 0;
 
-  while (stream->tell() < stream->length()) {
+  while (!stream->eof()) {
     line = stream->getline().chomp().trim();
 
     // Skip blank lines

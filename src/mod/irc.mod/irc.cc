@@ -1236,8 +1236,9 @@ killmember(struct chanset_t *chan, const char *nick, bool cacheMember)
 void member_update_from_cache(struct chanset_t* chan, memberlist *m) {
   // Are they in the cache?
   const bd::String userhost(m->userhost);
-  if (chan->channel.cached_members->contains(userhost)) {
-    memberlist *cached_member = (*chan->channel.cached_members)[userhost];
+  memberlist *const *cached = chan->channel.cached_members->try_get(userhost);
+  if (cached) {
+    memberlist *cached_member = *cached;
 
     // Update important flood tracking information
     swap(m->floodtime, cached_member->floodtime);

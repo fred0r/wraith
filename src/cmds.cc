@@ -4355,7 +4355,7 @@ void crontab_show(struct userrec *u, int idx) {
   bd::String line;
   crontab_exists(&crontab);
   crontab.seek(0, SEEK_SET);
-  while (crontab.tell() < crontab.length()) {
+  while (!crontab.eof()) {
     line = crontab.getline();
     dprintf(idx, "%s\n", line.c_str());
   }

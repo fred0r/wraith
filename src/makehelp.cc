@@ -40,7 +40,7 @@ int parse_help(bd::String infile, bd::String outfile) {
 \n\
 help_t help[] = \n\
 { \n");
-  while (in.tell() < in.length()) {
+  while (!in.eof()) {
     buffer = in.getline().chomp();
 
     if ((skipline(buffer.c_str(), &skip))) continue;

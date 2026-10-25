@@ -295,7 +295,7 @@ sock_read(bd::Stream& stream)
   int fd = -1;
   bd::String buf, type;
 
-  while (stream.tell() < stream.length()) {
+  while (!stream.eof()) {
     buf = stream.getline().chomp();
 
     if (buf == STR("+sock"))

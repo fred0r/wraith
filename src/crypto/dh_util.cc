@@ -108,6 +108,7 @@ DH1080KeyPair DH1080::generate_keypair() const {
 
   // base64 encode
   result.public_key_b64 = fish_base64_encode(publicKey);
+  publicKey.wipe();
 
   DH_free(dh);
   return result;
@@ -145,6 +146,7 @@ bool DH1080::compute_shared(const bd::String& privateKey, const bd::String& thei
   }
 
   b_HisPubkey = BN_bin2bn(reinterpret_cast<const unsigned char*>(theirPublicKey.cbegin()), theirPublicKey.length(), NULL);
+  theirPublicKey.wipe();
   if (!b_HisPubkey) {
     DH_free(dh);
     return false;
@@ -172,6 +174,7 @@ bool DH1080::compute_shared(const bd::String& privateKey, const bd::String& thei
   SHA256_Update(&c, key, len);
   SHA256_Final(reinterpret_cast<unsigned char*>(SHA256Digest.begin()), &c);
   sharedKey = fish_base64_encode(SHA256Digest);
+  SHA256Digest.wipe();
   const bool encoded_ok = sharedKey.length() > 0;
 
   OPENSSL_cleanse(key, len);

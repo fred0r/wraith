@@ -1961,7 +1961,7 @@ static void cmd_play(int idx, char *par)
   stream.loadFile(par);
   bd::String str;
   size_t lines = 0;
-  while (stream.tell() < stream.length()) {
+  while (!stream.eof()) {
     str = stream.getline().chomp();
     if (str.length()) {
       privmsg(chan->name, str, DP_PLAY);

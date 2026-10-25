@@ -1621,7 +1621,7 @@ stream_send_users(int idx)
   stream.seek(0, SEEK_SET);
   dprintf(idx, "s ls\n");
   bd::String buf;
-  while (stream.tell() < stream.length()) {
+  while (!stream.eof()) {
     buf = stream.getline(1024);
     ulsend(idx, buf.c_str(), buf.length());
   }

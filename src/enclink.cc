@@ -661,15 +661,16 @@ static const char *chacha20_poly1305_write(int snum, const char *src, size_t *le
 
 void link_send(int idx, const char *format, ...)
 {
-  char s[2001] = "";
   va_list va;
 
   va_start(va, format);
-  egg_vsnprintf(s, sizeof(s) - 1, format, va);
+  bd::String message = bd::String::vprintf(format, va);
   va_end(va);
-  remove_crlf(s);
 
-  dprintf(-dcc[idx].sock, STR("neg! %s\n"), s);
+  if (message.length())
+    remove_crlf(message.mdata());
+
+  dprintf(-dcc[idx].sock, STR("neg! %s\n"), message.c_str());
 }
 
 void link_done(int idx)

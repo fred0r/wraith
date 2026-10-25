@@ -155,7 +155,7 @@ static void cmd_setkey(int idx, char *par) {
 
   char *target = newsplit(&par);
   char *newkey = newsplit(&par);
-  bool have_key = FishKeys.contains(target);
+  bool have_key = FishKeys.try_get(target) != NULL;
 
   if (!newkey[0]) {
     // Clear the key

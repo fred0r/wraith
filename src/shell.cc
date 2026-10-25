@@ -900,7 +900,7 @@ int crontab_exists(bd::Stream* crontab, bool excludeSelf) {
       bd::String line;
 
       ret = 0;
-      while (stream.tell() < stream.length()) {
+      while (!stream.eof()) {
         line = stream.getline();
         if (line[0] != '#' && line.find(binname) != bd::String::npos) {
           ret = 1;

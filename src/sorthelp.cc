@@ -46,7 +46,7 @@ int parse_help(const bd::String& infile, const bd::String& outfile) {
 
   in.loadFile(infile);
   printf("Sorting help file '%s'", infile.c_str());
-  while (in.tell() < in.length()) {
+  while (!in.eof()) {
     buffer = in.getline().chomp();
 
     if ((skipline(buffer.c_str(), &skip))) continue;

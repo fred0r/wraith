@@ -91,9 +91,10 @@ void Auth::NewNick(const RfcString& newnick) noexcept
 
 Auth *Auth::Find(const char *_host) noexcept
 {
+  Auth *const *found = ht_host.try_get(_host);
 
-  if (ht_host.contains(_host)) {
-    Auth *auth = ht_host[_host];
+  if (found) {
+    Auth *auth = *found;
     sdprintf(STR("Found auth: (%s!%s) [%s]"), auth->nick.c_str(), auth->host,
         auth->user ? auth->user->handle : "*");
     return auth;
@@ -112,10 +113,10 @@ static void auth_clear_users_block(const bd::String& key, Auth* auth)
 
 void Auth::NullUsers(const RfcString& nick) noexcept
 {
-  if (!ht_nick.contains(nick))
+  Auth *const *found = ht_nick.try_get(nick);
+  if (!found)
     return;
-  auto auth = ht_nick[nick];
-  auth_clear_users_block(nick, auth);
+  auth_clear_users_block(nick, *found);
 }
 
 void Auth::NullUsers(void) noexcept

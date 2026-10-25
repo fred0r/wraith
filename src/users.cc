@@ -621,7 +621,7 @@ int stream_readuserfile(bd::Stream& stream, struct userrec **ret)
     putlog(LOG_MISC, "*", "Invalid userfile format.");
     return 0;
   }
-  while (stream.tell() < stream.length()) {
+  while (!stream.eof()) {
     s = buf;
     str = stream.getline(sizeof(buf)).chomp();
     strlcpy(s, str.c_str(), std::min(str.length() + 1, sizeof(buf)));

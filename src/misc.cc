@@ -667,7 +667,7 @@ readsocks(const char *fname)
 
   reset_chans = 0;
 
-  while (stream.tell() < stream.length()) {
+  while (!stream.eof()) {
     str = stream.getline().chomp();
     dprintf(DP_DEBUG, "read line: %s\n", str.c_str());
     type = newsplit(str);

@@ -880,9 +880,13 @@ void privmsg(const bd::String& target, bd::String msg, int idx) {
 
   // Encrypt with FiSH? (only chathubs use FiSH)
   // Skip CTCP messages (\001) — they must remain plaintext for client parsing
-  if (ischanhub() && !cleartextPrefix && msg[0] != '\001' &&
-      FishKeys.contains(target) && FishKeys[target]->sharedKey.length()) {
-    fish_data_t* fishData = FishKeys[target];
+  fish_data_t* fishData = NULL;
+  if (ischanhub() && !cleartextPrefix && msg[0] != '\001') {
+    fish_data_t* const *found = FishKeys.try_get(target);
+    if (found && (*found)->sharedKey.length())
+      fishData = *found;
+  }
+  if (fishData) {
     if (fishData->use_cbc)
       msg = "+OK *" + fish_bf_cbc_encrypt(fishData->sharedKey, msg);
     else
@@ -908,9 +912,13 @@ void notice(const bd::String& target, bd::String msg, int idx) {
 
   // Encrypt with FiSH? (only chathubs use FiSH)
   // Skip CTCP messages (\001) — they must remain plaintext for client parsing
-  if (ischanhub() && !cleartextPrefix && msg[0] != '\001' &&
-      FishKeys.contains(target) && FishKeys[target]->sharedKey.length()) {
-    fish_data_t* fishData = FishKeys[target];
+  fish_data_t* fishData = NULL;
+  if (ischanhub() && !cleartextPrefix && msg[0] != '\001') {
+    fish_data_t* const *found = FishKeys.try_get(target);
+    if (found && (*found)->sharedKey.length())
+      fishData = *found;
+  }
+  if (fishData) {
     if (fishData->use_cbc)
       msg = "+OK *" + fish_bf_cbc_encrypt(fishData->sharedKey, msg);
     else
@@ -938,7 +946,12 @@ void keyx(const bd::String &target, const char *reason) {
 
   DH1080_gen(myPrivateKey, myPublicKeyB64);
 
-  fish_data_t* fishData = FishKeys.contains(target) ? FishKeys[target] : new fish_data_t;
+  fish_data_t* fishData = NULL;
+  fish_data_t* const *found = FishKeys.try_get(target);
+  if (found)
+    fishData = *found;
+  else
+    fishData = new fish_data_t;
   fishData->sharedKey.clear();
   fishData->use_cbc = true;
   putlog(LOG_MSGS, "*", "[FiSH] Initiating DH1080 key-exchange with %s - "
@@ -952,7 +965,10 @@ void keyx(const bd::String &target, const char *reason) {
 
 void set_fish_key(const char *target, const bd::String key)
 {
-  fish_data_t* fishData = FishKeys.contains(target) ? FishKeys[target] : NULL;
+  fish_data_t* fishData = NULL;
+  fish_data_t* const *found = FishKeys.try_get(target);
+  if (found)
+    fishData = *found;
 
   if (!key.length()) { //remove key
     if (fishData) {

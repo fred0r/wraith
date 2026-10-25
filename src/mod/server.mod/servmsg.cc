@@ -188,10 +188,12 @@ static int check_bind_raw(char *from, char *code, char *msg)
           key_target = nick;
         }
 
-        const bool have_shared_key = FishKeys.contains(key_target);
+        fish_data_t* fishData = NULL;
+        fish_data_t* const *found = FishKeys.try_get(key_target);
 
-        if (have_shared_key) {
-          sharedKey = FishKeys[key_target]->sharedKey;
+        if (found) {
+          fishData = *found;
+          sharedKey = fishData->sharedKey;
         } else {
           struct userrec *u = get_user_by_host(from);
           if (u) {
@@ -218,9 +220,8 @@ static int check_bind_raw(char *from, char *code, char *msg)
           if (isValidCipherText) {
             bd::String cleartext(bd::String(msg, colon - msg) + decrypted);
             mymsg = p2 = strdup(cleartext.c_str());
-          } else if (!target_is_chan && have_shared_key) {
+          } else if (!target_is_chan && fishData) {
             // Delete the shared key
-            fish_data_t* fishData = FishKeys[key_target];
             FishKeys.remove(key_target);
             delete fishData;
           }
@@ -826,7 +827,7 @@ static int gotmsg(char *from, char *msg)
         if (doit)
           check_bind_msg(my_code, nick, uhost, my_u, msg);
 
-        if (my_u && FishKeys.contains(nick)) {
+        if (my_u && FishKeys.try_get(nick)) {
           // FiSH paranoid mode. Invalidate the current key and re-key-exchange with the user.
           if (fish_paranoid) {
             keyx(nick, "fish-paranoid is set");
@@ -854,7 +855,12 @@ void handle_DH1080_init(const char* nick, const char* uhost, const char* from, s
   }
 
   putlog(LOG_MSGS, "*", "[FiSH] Received DH1080 public key from (%s!%s) - sending mine", nick, uhost);
-  fish_data_t* fishData = FishKeys.contains(nick) ? FishKeys[nick] : new fish_data_t;
+  fish_data_t* fishData = NULL;
+  fish_data_t* const *found = FishKeys.try_get(nick);
+  if (found)
+    fishData = *found;
+  else
+    fishData = new fish_data_t;
   fishData->sharedKey.clear();
   fishData->use_cbc = peer_cbc;
   bd::String finishSuffix = peer_cbc ? bd::String(" CBC") : bd::String();
@@ -874,12 +880,13 @@ void handle_DH1080_finish(const char* nick, const char* uhost, const char* from,
     return;
   }
 
-  if (!FishKeys.contains(nick)) {
+  fish_data_t* const *found = FishKeys.try_get(nick);
+  if (!found) {
     putlog(LOG_MSGS, "*", "[FiSH] Unexpected DH1080_FINISH from (%s!%s) - ignoring", nick, uhost);
     return;
   }
 
-  fish_data_t* fishData = FishKeys[nick];
+  fish_data_t* fishData = *found;
   bd::String sharedKey;
 
   if (!DH1080_comp(fishData->myPrivateKey, theirPublicKeyB64, sharedKey)) {
