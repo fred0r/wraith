@@ -112,7 +112,11 @@ bool ChaCha20Poly1305::encrypt_checked(const bd::String& key, const bd::String& 
   OPENSSL_cleanse(outbuf.data(), outbuf.size());
   OPENSSL_cleanse(wire.data(), wire.size());
 
-  out = bd::base64Encode(result);
+  bd::String encoded;
+  if (!bd::base64Encode(result, encoded))
+    return false;
+
+  out = encoded;
   return true;
 }
 
@@ -131,7 +135,9 @@ bool ChaCha20Poly1305::decrypt_checked(const bd::String& key, const bd::String& 
   if (!key_valid(key, allow_short_key))
     return false;
 
-  bd::String decoded = bd::base64Decode(data);
+  bd::String decoded;
+  if (!bd::base64Decode(data, decoded, true))
+    return false;
 
   if (decoded.length() < CHACHA_NONCELEN + CHACHA_TAGLEN)
     return false;

@@ -35,7 +35,9 @@ DH1080::~DH1080()
 }
 
 bd::String DH1080::fish_base64_encode(const bd::String& str) {
-  bd::String result(bd::base64Encode(str));
+  bd::String result;
+  if (!bd::base64Encode(str, result))
+    return bd::String();
 
   // No padding, add an A on the end (base64-encoded NULL-terminator)
   if (result.rfind('=') == result.npos) {
@@ -61,7 +63,10 @@ bd::String DH1080::fish_base64_decode(const bd::String& str) {
     temp += '=';
   }
 
-  return bd::base64Decode(temp);
+  bd::String decoded;
+  if (!bd::base64Decode(temp, decoded, false))
+    return bd::String();
+  return decoded;
 }
 
 DH1080KeyPair DH1080::generate_keypair() const {
@@ -134,7 +139,16 @@ bool DH1080::compute_shared(const bd::String& privateKey, const bd::String& thei
 
   // Prep their public key
   bd::String theirPublicKey(fish_base64_decode(theirPublicKeyB64));
+  if (!theirPublicKey.length()) {
+    DH_free(dh);
+    return false;
+  }
+
   b_HisPubkey = BN_bin2bn(reinterpret_cast<const unsigned char*>(theirPublicKey.cbegin()), theirPublicKey.length(), NULL);
+  if (!b_HisPubkey) {
+    DH_free(dh);
+    return false;
+  }
 
   // Compute the Shared key
   char *key = (char *)calloc(1, DH_size(dh));
@@ -158,11 +172,12 @@ bool DH1080::compute_shared(const bd::String& privateKey, const bd::String& thei
   SHA256_Update(&c, key, len);
   SHA256_Final(reinterpret_cast<unsigned char*>(SHA256Digest.begin()), &c);
   sharedKey = fish_base64_encode(SHA256Digest);
+  const bool encoded_ok = sharedKey.length() > 0;
 
   OPENSSL_cleanse(key, len);
   free(key);
 
-  return true;
+  return encoded_ok;
 }
 
 /* C API wrappers */

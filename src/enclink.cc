@@ -52,8 +52,13 @@ static bool link_random_key(char out[ENC_KEY_LEN + 1])
   if (RAND_bytes(raw, sizeof(raw)) != 1)
     return false;
 
-  bd::String encoded = bd::base64Encode(
-      bd::String(reinterpret_cast<const char *>(raw), sizeof(raw)));
+  bd::String encoded;
+  if (!bd::base64Encode(
+          bd::String(reinterpret_cast<const char *>(raw), sizeof(raw)),
+          encoded)) {
+    OPENSSL_cleanse(raw, sizeof(raw));
+    return false;
+  }
   OPENSSL_cleanse(raw, sizeof(raw));
 
   if (encoded.length() != ENC_KEY_LEN)
@@ -267,8 +272,12 @@ chacha_rotate(char* key, int& seed)
     return false;
   }
 
-  bd::String b64key = bd::base64Encode(
-      bd::String((const char *)hmac_out, 24));
+  bd::String b64key;
+  if (!bd::base64Encode(
+          bd::String((const char *)hmac_out, 24), b64key)) {
+    OPENSSL_cleanse(hmac_out, sizeof(hmac_out));
+    return false;
+  }
   OPENSSL_cleanse(hmac_out, sizeof(hmac_out));
 
   if (b64key.length() != ENC_KEY_LEN)

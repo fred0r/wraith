@@ -170,14 +170,19 @@ bd::String BlowfishCipher::fish_encrypt(const bd::String& plaintext) const
       BF_ENCRYPT
   );
 
-  return bd::base64Encode(iv + out);
+  bd::String encoded;
+  if (!bd::base64Encode(iv + out, encoded))
+    return bd::String();
+  return encoded;
 }
 
 bd::String BlowfishCipher::fish_decrypt(const bd::String& b64ciphertext) const
 {
   if (!b64ciphertext.length()) return b64ciphertext;
 
-  bd::String decoded(bd::base64Decode(b64ciphertext));
+  bd::String decoded;
+  if (!bd::base64Decode(b64ciphertext, decoded, false))
+    return bd::String();
 
   // Need at least IV (BF_BLOCK bytes) + 1 block
   if (decoded.length() < static_cast<size_t>(BF_BLOCK * 2)) return bd::String();
