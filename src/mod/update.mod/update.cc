@@ -44,6 +44,8 @@
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <cerrno>
+#include <cstdlib>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -227,10 +229,40 @@ static void update_ufsend(int idx, char *par)
   }
 }
 
+static void update_stream_abort(int idx, const char *reason)
+{
+  putlog(LOG_ERRORS, "*", "Invalid binary stream from %s: %s", dcc[idx].nick, reason);
+  dcc[idx].status &= ~STAT_GETTINGU;
+  dprintf(idx, "s un %s\n", reason);
+  botunlink(-2, dcc[idx].nick, reason);
+}
+
 static void update_stream_line(int idx, char *par) {
   char *size = newsplit(&par);
 
-  stream_in << bd::base64Decode(bd::String(par, atoi(size)));
+  if (!size[0] || !par[0]) {
+    update_stream_abort(idx, "missing binary stream chunk");
+    return;
+  }
+
+  errno = 0;
+  char *end = NULL;
+  const unsigned long chunk_len = strtoul(size, &end, 10);
+  const size_t par_len = strlen(par);
+
+  if (errno || end == size || *end || chunk_len != par_len) {
+    update_stream_abort(idx, "bad binary stream chunk size");
+    return;
+  }
+
+  bd::String chunk(par, chunk_len);
+  bd::String decoded;
+  if (!bd::base64Decode(chunk, decoded, false)) {
+    update_stream_abort(idx, "bad binary stream encoding");
+    return;
+  }
+
+  stream_in << decoded;
 }
 
 static void update_stream_start(int idx, char *par) {
@@ -394,15 +426,23 @@ static void stream_continue(void *)
   }
 
   int chunks = 0;
-  while (stream_state.stream.tell() < stream_state.stream.length() &&
+  while (!stream_state.stream.eof() &&
          chunks < STREAM_CHUNKS_PER_TICK &&
          !sock_has_data(SOCK_DATA_OUTGOING, dcc[idx].sock)) {
-    bd::String buf = bd::base64Encode(stream_state.stream.read(1024));
+    bd::String data = stream_state.stream.read(1024);
+    bd::String buf;
+    if (!bd::base64Encode(data, buf)) {
+      putlog(LOG_ERRORS, "*", "Unable to encode binary stream to %s", dcc[idx].nick);
+      dcc[idx].status &= ~STAT_SENDINGU;
+      UpdateModule::set_bupdating(false);
+      stream_state.active = false;
+      return;
+    }
     ulsend(idx, buf.c_str(), buf.length());
     chunks++;
   }
 
-  if (stream_state.stream.tell() >= stream_state.stream.length()) {
+  if (stream_state.stream.eof()) {
     dprintf(idx, "sb le\n");
     putlog(LOG_BOTS, "*", "Completed binary file send to %s", dcc[idx].nick);
     dcc[idx].status &= ~STAT_SENDINGU;
