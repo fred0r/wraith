@@ -3075,19 +3075,13 @@ static int gotjoin(char *from, char *chname)
            * Don't require bot_shouldjoin() here: the new-group bot may join before
            * its groups variable has been synced to this bot. As long as it has op
            * flags, give it op so the channel doesn't lose all ops when we part. */
-          if (!chan_hasop(m) && !chan_sentop(m) && chan->channel.groupchange_op_sent &&
+          if (!chan_hasop(m) && !chan_sentop(m) && chan->channel.groupchange_pending &&
               is_bot(m->user) && chk_op(fr, chan)) {
             do_op(m, chan, 0, 0);
-            if (!chan->op_delegation_flush_timer) {
-              egg_timeval_t howlong = { 1, 0 };
-              chan->op_delegation_flush_timer =
-                  timer_create_complex(&howlong, "opdel_flush",
-                      (Function) op_delegation_flush, chan, 0);
-            }
-            /* New-group bot now has op; leave immediately instead of
-             * waiting for the 5s parttime fallback. MODE +o is queued
-             * before PART so the server processes op before we leave. */
-            chan->channel.parttime = now;
+            flush_mode(chan, QUICK);
+            /* The server's +o echo (got_op) confirms the replacement before
+             * the group-change timer is allowed to PART. */
+            schedule_groupchange_check(chan, 1);
           }
 
           /* +v or +voice */

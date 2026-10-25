@@ -317,6 +317,49 @@ check_slowjoinpart(struct chanset_t *chan)
   return 0;
 }
 
+static void groupchange_check(void *data);
+
+void schedule_groupchange_check(struct chanset_t *chan, int seconds)
+{
+  if (!chan || conf.bot->hub)
+    return;
+
+  if (chan->channel.groupchange_timer) {
+    timer_destroy(chan->channel.groupchange_timer);
+    chan->channel.groupchange_timer = 0;
+  }
+
+  egg_timeval_t howlong = { seconds, 0 };
+
+  chan->channel.groupchange_timer = timer_create_complex(&howlong,
+      "groupchange", (Function) groupchange_check, chan, 0);
+}
+
+static void groupchange_check(void *data)
+{
+  struct chanset_t *chan = (struct chanset_t *) data;
+
+  chan->channel.groupchange_timer = 0;
+
+  if (!chan->channel.groupchange_pending)
+    return;
+
+  /* A replacement was confirmed by gotjoin()/check_shouldjoin(). */
+  if (chan->channel.parttime) {
+    check_slowjoinpart(chan);
+    return;
+  }
+
+  /* Re-check for a replacement and op/invite new-group bots. */
+  check_shouldjoin(chan, true);
+
+  if (chan->channel.parttime) {
+    check_slowjoinpart(chan);
+  } else if (chan->channel.groupchange_pending) {
+    schedule_groupchange_check(chan, 10);
+  }
+}
+
 static void 
 check_limitraise(struct chanset_t *chan) {
   /* only check every other time for now */

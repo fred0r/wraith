@@ -436,7 +436,7 @@ sdprintf("var (mem): %s -> %s", var->name, datain ? datain : "(NULL)");
   if (!conf.bot->hub && !strcmp(var->name, "groups")) {
     if (server_online && !restarting && !loading && !reset_chans) {
       for (struct chanset_t* chan = chanset; chan; chan = chan->next) {
-        check_shouldjoin(chan);
+        check_shouldjoin(chan, true);
       }
     }
   }

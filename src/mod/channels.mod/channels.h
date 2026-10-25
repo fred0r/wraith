@@ -53,6 +53,7 @@ bool ismodeline(const masklist *, const char *) __attribute__((pure));
 void channels_report(int, int);
 void channels_writeuserfile(bd::Stream&, int = 0, int peer_numver = -1);
 void rcmd_chans(const char *, const char *, const char *);
+void schedule_groupchange_check(struct chanset_t *, int seconds = 1);
 
 
 /* Macro's here because their functions were replaced by something more

@@ -171,6 +171,8 @@ struct chan_t {
   time_t jointime;
   time_t parttime;
   time_t groupchange_op_sent;  /* when this bot (or a peer via 'go' msg) last sent group-change ops */
+  bool groupchange_pending;    /* waiting for a replacement-group bot to be opped */
+  int groupchange_timer;       /* 1s finish/retry timer for group changes */
   time_t no_op;
   time_t drone_jointime;
   time_t invite_retry;         /* when to re-request an invite while waiting to join a +i chan */

@@ -911,6 +911,11 @@ got_op(struct chanset_t *chan, memberlist *m, memberlist *mv)
       }
     }
   }
+
+  if (chan->channel.groupchange_pending && groupchange_replacement_opped(chan)) {
+    chan->channel.parttime = now;
+    schedule_groupchange_check(chan, 1);
+  }
 }
 
 static void
