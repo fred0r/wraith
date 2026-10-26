@@ -208,7 +208,11 @@ break_down_flags(const char *string, struct flag_record *plus, struct flag_recor
         break;                  /* switch() */
       default:
       {
-        flag_t flagbit = FLAG[(int) *string];
+        const unsigned char flag_char = static_cast<unsigned char>(*string);
+        flag_t flagbit = 0;
+
+        if (flag_char < sizeof(FLAG) / sizeof(FLAG[0]))
+          flagbit = FLAG[flag_char];
 
         if (flagbit) {
           switch (chan) {

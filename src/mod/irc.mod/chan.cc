@@ -2891,6 +2891,14 @@ static int gotjoin(char *from, char *chname)
 	m->last = now;
 	m->delay = 0L;
 	m->flags = (chan_hasop(m) ? WASOP : 0);
+        if (m->is_me) {
+          m->user = conf.bot->u;
+          m->tried_getuser = 1;
+        } else {
+          m->user = NULL;
+          m->tried_getuser = 0;
+          member_getuser(m);
+        }
         /* New bot available for roles, rebalance. */
         if (is_bot(m->user)) {
           chan->role_rebalance_cookie = 0;
@@ -2900,9 +2908,7 @@ static int gotjoin(char *from, char *chname)
         irc_log(chan, "%s returned from netsplit", m->nick);
 
         if (!m->user) {
-          member_getuser(m);
- 
-          if (!m->user && !m->userip[0] && doresolv(chan)) {
+          if (!m->userip[0] && doresolv(chan)) {
             if (is_dotted_ip(host)) {
               strlcpy(m->userip, uhost, sizeof(m->userip));
               simple_snprintf(m->fromip, sizeof(m->fromip), "%s!%s", m->nick, m->userip);

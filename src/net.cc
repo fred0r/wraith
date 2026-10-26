@@ -1377,6 +1377,8 @@ void tputs(int z, const char *s, size_t len)
         traffic.out_today.filesys += len;
       else if (!strcmp(dcc[idx].type->name, "SEND"))
         traffic.out_today.trans += len;
+      else if (!strcmp(dcc[idx].type->name, "FORK_SEND"))
+        traffic.out_today.trans += len;
       else if (!strncmp(dcc[idx].type->name, "GET", 3))
         traffic.out_today.trans += len;
       else
@@ -1674,9 +1676,11 @@ bool socket_run() {
           else if (!strncmp(dcc[idx].type->name, "FILES", 5))
             traffic.in_today.dcc += i + 1;
           else if (!strcmp(dcc[idx].type->name, "SEND"))
-            traffic.in_today.trans += i + 1;
+            traffic.in_today.trans += i;
+          else if (!strcmp(dcc[idx].type->name, "FORK_SEND"))
+            traffic.in_today.trans += i;
           else if (!strncmp(dcc[idx].type->name, "GET", 3))
-            traffic.in_today.trans += i + 1;
+            traffic.in_today.trans += i;
           else
             traffic.in_today.unknown += i + 1;
         }

@@ -75,14 +75,15 @@ static const char base64to[256] =
 
 int base64_to_int(const char *buf)
 {
-  int i = 0;
+  unsigned int i = 0;
 
   while (*buf) {
     i = i << 6;
-    i += base64to[(int) *buf];
+    i += static_cast<unsigned int>(
+        base64to[static_cast<unsigned char>(*buf)]);
     buf++;
   }
-  return i;
+  return static_cast<int>(i);
 }
 
 static const char tobase64array[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789[]";

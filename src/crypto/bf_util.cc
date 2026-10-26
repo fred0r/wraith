@@ -102,7 +102,8 @@ bd::String BlowfishCipher::egg_decrypt(const bd::String& ciphertext) const
   if (in.size() < 12) return out;
 
   // Not valid base64
-  if (eggdrop_blowfish_base64_index[int(in[0])] == -1) return out;
+  if (eggdrop_blowfish_base64_index[static_cast<unsigned char>(in[0])] == -1)
+    return out;
 
   int cut_off = in.length() % 12;
   if (cut_off > 0)
@@ -111,17 +112,18 @@ bd::String BlowfishCipher::egg_decrypt(const bd::String& ciphertext) const
   bf_data data;
   int val;
   size_t part;
-  const char *s = in.cbegin();
+  const unsigned char *s =
+      reinterpret_cast<const unsigned char *>(in.cbegin());
   for (size_t i = 0; i < in.length(); i += 12) {
     data.lr.left = 0;
     data.lr.right = 0;
     for (part = 0; part < 6; part++) {
-      if ((val = eggdrop_blowfish_base64_index[int(*s++)]) == -1) return out;
-      data.lr.right |= (char)val << part * 6;
+      if ((val = eggdrop_blowfish_base64_index[*s++]) == -1) return out;
+      data.lr.right |= static_cast<BF_LONG>(val) << (part * 6);
     }
     for (part = 0; part < 6; part++) {
-      if ((val = eggdrop_blowfish_base64_index[int(*s++)]) == -1) return out;
-      data.lr.left |= (char)val << part * 6;
+      if ((val = eggdrop_blowfish_base64_index[*s++]) == -1) return out;
+      data.lr.left |= static_cast<BF_LONG>(val) << (part * 6);
     }
     BF_decrypt(&data.bf_long, &dec_key_);
     for (part = 0; part < 4; part++) {
