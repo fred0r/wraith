@@ -1,0 +1,20 @@
+Bundled libelf for Wraith
+=========================
+
+Source:
+  https://github.com/arachsys/libelf
+  Tag: v0.197 (commit fcd3951fd364)
+
+This is the freestanding libelf extracted from elfutils 0.197. Wraith uses it
+only when a usable system libelf is not found by configure.
+
+Local changes:
+  - Wraith builds and links only the static libelf.a.
+  - Wraith uses the bundled src/elf.h with the public libelf headers.
+  - Disable zstd support; keep zlib for compressed ELF sections.
+  - Disable gettext/libintl and use untranslated error strings.
+  - Use compiler byte-order/builtin byte-swap definitions for portability.
+  - Use conservative libc feature fallbacks instead of Linux-specific values.
+
+Keep the upstream README and license files alongside this note. Patches should
+be kept minimal so future updates can be compared against upstream v0.197.

@@ -10,6 +10,10 @@ TARGETS=	\
 		clean \
 		distclean \
 		test \
+		test-bdlib \
+		test-wraith \
+		test-asan \
+		test-integration \
 		check
 
 .for target in ${TARGETS}

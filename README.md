@@ -59,13 +59,17 @@ The following botpacks gave inspiration, ideas, and some code:
 - OpenSSL headers and `libcrypto`
 - GNU make (`gmake` on FreeBSD/OpenBSD/NetBSD)
 - Git submodules when building from a source checkout
-- System `libelf` is used when available; Wraith bundles a fallback
+- Optional system libelf (`libelf-dev` on Debian/Ubuntu,
+  `elfutils-libelf-devel` on Fedora/RHEL); otherwise Wraith builds its
+  bundled libelf, which requires zlib headers
 - Tests: `pkg-config` and CppUnit >= 1.14
 - Pack generation and integration tests: Python 3
 
 ```sh
 # Debian/Ubuntu
 sudo apt install build-essential libssl-dev
+sudo apt install libelf-dev                          # optional: system libelf
+sudo apt install zlib1g-dev                          # only for bundled fallback
 sudo apt install pkg-config libcppunit-dev python3   # tests and pack generator
 
 # FreeBSD
@@ -80,6 +84,20 @@ where to find it:
 ./configure --with-openssl=/usr/local
 ```
 
+### Select libelf
+
+By default configure uses a system libelf when available and falls back to the
+bundled copy. Force a mode when needed:
+
+```sh
+./configure --with-libelf=auto     # system if usable, otherwise bundled
+./configure --with-libelf=system   # require system libelf
+./configure --with-libelf=bundled  # always use bundled libelf
+```
+
+The bundled copy requires zlib headers. Run `make clean` before switching
+libelf modes.
+
 ### Build from source
 
 ```sh
@@ -90,6 +108,13 @@ git submodule update --init --recursive
 make -j"$(nproc)"
 
 # FreeBSD/OpenBSD/NetBSD
+gmake -j"$(sysctl -n hw.ncpu)"
+```
+
+For the bundled FreeBSD/NetBSD build:
+
+```sh
+./configure --with-libelf=bundled
 gmake -j"$(sysctl -n hw.ncpu)"
 ```
 

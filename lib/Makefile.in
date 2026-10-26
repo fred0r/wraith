@@ -23,9 +23,6 @@ clean:
 
 distclean: clean
 	-+@cd bdlib && $(MAKE) distclean
-	-+@if [ -n "${LIBELF_BUNDLED}" ] && [ -f libelf/Makefile ]; then \
-	    cd libelf && $(MAKE) distclean; \
-	   fi
 
 notice:
 	@echo "[*] Making libraries"
@@ -42,9 +39,9 @@ general:
 libelf_notice:
 	@echo "[*] Building libelf"
 
-.PHONY: $(top_builddir)/lib/libelf/lib/libelf.a
-$(top_builddir)/lib/libelf/lib/libelf.a: libelf_notice
-	+@cd libelf/lib && $(MAKE) CFLAGS="-g -O2 -w" libelf.a
+.PHONY: $(top_builddir)/lib/libelf/libelf.a
+$(top_builddir)/lib/libelf/libelf.a: libelf_notice
+	+@cd libelf && $(MAKE) CC="$(CC)" CFLAGS="-g -O2 -w" libelf.a
 
 libelf: $(LIBELF_BUNDLED)
 

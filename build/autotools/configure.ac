@@ -236,7 +236,4 @@ export CC CXX
 if [[ -f lib/bdlib/configure ]]; then
   AC_CONFIG_SUBDIRS([lib/bdlib])
 fi
-if [[ -n "${LIBELF_BUNDLED}" ]] && [[ -f lib/libelf/configure ]]; then
-  AC_CONFIG_SUBDIRS([lib/libelf])
-fi
 AC_OUTPUT

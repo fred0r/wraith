@@ -28,6 +28,12 @@ This package includes a mix of licenses:
   * GPL v2
   * BSD-style
 
+Bundled libelf:
+ * lib/libelf is derived from arachnsys/libelf 0.197, extracted from elfutils.
+ * It is dual-licensed GPL v2 or later / LGPL v3 or later. Wraith uses the
+   GPL v2 or later option. See lib/libelf/COPYING-GPLV2 and
+   lib/libelf/COPYING-LGPLV3.
+
  * This product includes unlicensed code (mostly GPL) by Erik Johansen (einride) from the ghost botpack (http://ghost.botpack.net)
 
  snprintf.c:
