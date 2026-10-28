@@ -49,6 +49,8 @@ class FakeIRCServer:
         self._received = []
         self._sent = []
         self.channels = {}
+        self.channel_modes = {}
+        self.invites = {}
         self.join_errors = {}
         self.defer_who = set()
         self._who_deferred = []
@@ -285,6 +287,8 @@ class FakeIRCServer:
             self._handle_userhost(client, params)
         elif command == "MODE":
             self._handle_mode(prefix, params, client)
+        elif command == "INVITE":
+            self._handle_invite(client, prefix, params)
         elif command == "KICK":
             self._handle_kick(prefix, params)
 
@@ -330,9 +334,21 @@ class FakeIRCServer:
                 nick,
             )
             return
+        with self._cond:
+            invite_only = "i" in self.channel_modes.get(chans[0], set())
+            invited = nick in self.invites.get(chans[0], set())
+        if invite_only and not invited:
+            self.send(
+                ":fake.irc 473 %s %s :Cannot join channel (+i)"
+                % (nick, chans[0]),
+                nick,
+            )
+            return
         if member is None:
             member = self._ensure_member(chans[0], nick)
         for chan in chans:
+            with self._cond:
+                self.invites.setdefault(chan, set()).discard(nick)
             self.channels.setdefault(chan, {})[nick] = member
             self.send(":%s JOIN %s" % (prefix, chan))
 
@@ -395,6 +411,14 @@ class FakeIRCServer:
             if mode in "+-":
                 sign = mode
                 continue
+            if mode == "i":
+                with self._cond:
+                    modes = self.channel_modes.setdefault(target, set())
+                    if sign == "+":
+                        modes.add("i")
+                    else:
+                        modes.discard("i")
+                continue
             if mode in "ovbeIkl":
                 if param_index >= len(fields):
                     break
@@ -414,6 +438,26 @@ class FakeIRCServer:
             self.send(":%s MODE %s" % (prefix, params))
         elif ack_modes:
             self.send(":fake.irc MODE %s %s %s" % (target, ack_modes, " ".join(ack_params)))
+
+    def _handle_invite(self, client, prefix, params):
+        fields = params.split()
+        if len(fields) < 2:
+            return
+        target = fields[0]
+        chan = fields[1]
+        if prefix:
+            inviter = prefix.split("!", 1)[0]
+        elif client is not None and client.nick:
+            inviter = client.nick
+        else:
+            return
+        with self._cond:
+            self.invites.setdefault(chan, set()).add(target)
+        target_client = self._client(target)
+        if target_client is None:
+            return
+        self._write(target_client,
+                    ":%s!user@host INVITE %s :%s" % (inviter, target, chan))
 
     def _handle_kick(self, prefix, params):
         fields = params.split()

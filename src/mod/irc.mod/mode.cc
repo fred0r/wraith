@@ -31,7 +31,6 @@
 
 #include "src/shell.h"
 #include "pending_cookies.h"
-#include <vector>
 
 /* Reversing this mode? */
 bool reversing = 0;
@@ -44,6 +43,7 @@ static bool mdop_reversing = 1;
  * at most once per LIMIT_MIN_INTERVAL. */
 #define LIMIT_SETTLE      60
 #define LIMIT_MIN_INTERVAL 90
+#define GROUPCHANGE_INVITE_WINDOW 120
 
 static bool limit_bounce_allowed(const struct chanset_t *chan)
 {
@@ -832,44 +832,14 @@ got_op(struct chanset_t *chan, memberlist *m, memberlist *mv)
     /* check exempts/invites and shit */
     recheck_channel(chan, 2);
 
-    /* I just got opped. If the channel is invite-only, actively pull in the
-     * group peers that should be here: ask capable bots to (re)send their
-     * invite request ('gi r', accurate nick) and INVITE the rest directly
-     * (covers older bots that don't understand 'gi r'). Throttled per
-     * channel so op/deop loops can't spam the botnet. */
-    if (me_op(chan) && (chan->channel.mode & CHANINV) &&
-        (now - chan->channel.invite_pull) >= 30) {
-      struct flag_record ifr = { FR_GLOBAL | FR_CHAN | FR_BOT, 0, 0, 0 };
-      bd::String pull;
-      int missing = 0;
-
-      for (tand_t *b = tandbot; b; b = b->next) {
-        if (b->hub || !b->u)
-          continue;
-
-        get_user_flagrec(b->u, &ifr, chan->dname, chan);
-        if (!bot_shouldjoin(b->u, &ifr, chan) || !chk_op(ifr, chan))
-          continue;
-
-        if (ismember(chan, b->bot))
-          continue;
-
-        ++missing;
-        if (!pull.length())
-          pull = bd::String::printf("gi r %s", chan->dname);
-
-        dprintf(DP_MODE, "INVITE %s %s\n", b->bot, chan->name[0] ? chan->name : chan->dname);
-      }
-
-      if (missing) {
-        putallbots(pull.c_str());
-        chan->channel.invite_pull = now;
-        putlog(LOG_GETIN, "*", "Pulled %d bot(s) into invite-only %s", missing, chan->dname);
-      }
-    }
+    if (chan->channel.groupchange.invite_started &&
+        (now - chan->channel.groupchange.invite_started) <= GROUPCHANGE_INVITE_WINDOW)
+      group_change::invite_peers(chan, true, false);
+    else
+      group_change::invite_peers(chan, false, false);
   }
 
-  if (chan->channel.groupchange_pending && groupchange_replacement_opped(chan)) {
+  if (chan->channel.groupchange.pending && group_change::replacement_opped(chan)) {
     chan->channel.parttime = now;
     schedule_groupchange_check(chan, 1);
   }

@@ -1,31 +1,131 @@
 :banned
  Banned
+ No sane people allowed here. Go home.
+ Let's keep it simple. Why don't you just go away, and stop acting the fool?
+ Now, again, please leave.
+ I believe you deserve to stop running the software.
+ I don't see your name on any the source code. So you shut up, loser. Just go away.
+ I am not being sarcastic. I truly am sick of having my time wasted.
 :kickban
  Banned
+ Bye bye.
+ Can you please leave?
+ Just give it up and get lost.
+ Just pathetic. Hope you actually get a life sometime.
+ You just like listening to yourself talk. Shut up.
+ You are a whiny snively jerk, and every time you open your mouth I go work on something else.
 :massdeop
  Mass deop
+ You are not listening.
+ That is not our problem.
+ That's a lot of words.
+ It is clear that this has not been thought through.
+ That's the most ridiculous thing I've heard in the last two or three minutes!
+ You guys just are not thinking.
 :badop
  Bad op cookie from you
+ Shit should not be shared.
+ You enabled things which are disabled for a good reason.
+ No. You misread the code.
+ can you not read the prompt?
+ Go read the source code some time.
+ You must not be reading the same code I am.
+ Come on. Read it carefully.
+ You need to read more carefully.
+ No. You have it wrong. Go back to reading school.
+ There is no point in testing a diff which is wrong.
 :badopped
  Bad op cookie for you
+ You clearly cannot read.
+ Bullshit.
+ You are wrong.
+ Wrong.
+ You are very confused.
+ Totally false.
+ Your approach is wrong.
+ You have it entirely backwards.
 :bitchop
  Channel is +bitch
+ Buttons are for idiots.
+ shame on you for following my rules.
+ I don't like control
+ We are not believers in buttons. Knobs are for knobs.
+ Your attitude stinks. Good luck with life.
+ Your attitude is not very nice.
+ Wow, your process stinks.
 :bitchopped
  You dont have op access here
+ I still think you are a loser.
+ You have no right to speak.
+ You've got it all wrong.
+ You just plain don't understand the problem.
+ You obviously have zero experience.
+ That is a simplistic viewpoint held by your simplistic mind.
+ Your lack of any attempt to educate yourself is your problem.
 :manualop
  Manual opping is not allowed
+ You're not allowed to have an opinion.
+ Stop thinking of only yourself.
+ Come on.. stop making assumptions.
+ But you decided you are special, and don't want us to help us help you.
+ Things change. Learn to cope.
+ You accept how we do it, and you will shut up, or less service will be provided in the future.
 :manualopped
  Manually opped
+ Anyways, who cares.
+ You missed the point.
+ I don't see the point.
+ Really. How interesting.
+ The best part is that noone cares about that.
+ I don't care.
+ Great.
 :closed
  Channel is closed
+ FULL STOP.
+ Please don't.
+ If you are just grandstanding, please stop.
+ No, please, don't explain.
+ If you don't like it, run something else.
+ Thing is, you won't get help here.
 :flood
  Flood
+ That's because you have been slacking.
+ That's what happens when you're lazy.
+ Stop slacking you lazy bum!
+ 35 commits an hour? That's pathetic!
+ Write more code.
+ Make more commits.
+ Fine software takes time to prepare. Give a little slack.
 :nickflood
  Nick flood
+ slacker!
+ idler!
+ slackass!
+ lazy bum!
+ slacker slacker lazy bum bum bum slacker!
+ I could search... but I'm a lazy bum ;)
+ Lazy bums slacking on your asses.
+ you slackers don't deserve pictures yet
 :kickflood
  Kick flood
+ Holy verbose prom startup Batman.
+ The comedy just never ends.
+ Frankly, I think you are a whiner.
+ Ah, we have another talker in the house.
+ I am not reading your mails again.
+ I'm not even going to read to the end.
+ Wow, you sure like to make presumptions.
 :revenge
  Don't mess with the bots
+ I love to fight
+ wavelan is a battle field
+ Don't spread rumours about me being gentle.
+ Have I ever been subtle? If my approach ever becomes subtle, shoot me.
+ I wish you'd just find a room and bludgeon each other.
+ the acpi stabs you in the back. the acpi stabs you in the back. you die ...
+ You'll experience anguish, and then if you try to ask for sympathy a lot of people will laugh at you.
+ I am just plain fed up with the bullshit you cowards spew.
+ Oh my god, the tears! Look at his tears!
 :username
  Username?
 :password

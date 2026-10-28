@@ -292,7 +292,7 @@ check_slowjoinpart(struct chanset_t *chan)
   /* slowpart */
   if (chan->channel.parttime && (chan->channel.parttime < now)) {
     chan->channel.parttime = 0;
-    chan->channel.groupchange_op_sent = 0;
+    chan->channel.groupchange.op_sent = 0;
     dprintf(DP_MODE, "PART %s\n", chan->name);
     /* parttime is only set by check_shouldjoin() for group-change-triggered
      * parts. Always use clear_channel() to preserve the chanset entry and all
@@ -324,14 +324,14 @@ void schedule_groupchange_check(struct chanset_t *chan, int seconds)
   if (!chan || conf.bot->hub)
     return;
 
-  if (chan->channel.groupchange_timer) {
-    timer_destroy(chan->channel.groupchange_timer);
-    chan->channel.groupchange_timer = 0;
+  if (chan->channel.groupchange.timer) {
+    timer_destroy(chan->channel.groupchange.timer);
+    chan->channel.groupchange.timer = 0;
   }
 
   egg_timeval_t howlong = { seconds, 0 };
 
-  chan->channel.groupchange_timer = timer_create_complex(&howlong,
+  chan->channel.groupchange.timer = timer_create_complex(&howlong,
       "groupchange", (Function) groupchange_check, chan, 0);
 }
 
@@ -339,9 +339,9 @@ static void groupchange_check(void *data)
 {
   struct chanset_t *chan = (struct chanset_t *) data;
 
-  chan->channel.groupchange_timer = 0;
+  chan->channel.groupchange.timer = 0;
 
-  if (!chan->channel.groupchange_pending)
+  if (!chan->channel.groupchange.pending)
     return;
 
   /* A replacement was confirmed by gotjoin()/check_shouldjoin(). */
@@ -352,10 +352,11 @@ static void groupchange_check(void *data)
 
   /* Re-check for a replacement and op/invite new-group bots. */
   check_shouldjoin(chan, true);
+  group_change::invite_peers(chan, true);
 
   if (chan->channel.parttime) {
     check_slowjoinpart(chan);
-  } else if (chan->channel.groupchange_pending) {
+  } else if (chan->channel.groupchange.pending) {
     schedule_groupchange_check(chan, 10);
   }
 }
@@ -446,7 +447,7 @@ static void got_sp(int idx, char *code, char *par)
       write_userfile(-1);
     } else {
       chan->channel.parttime = ((atoi(par) + now) - server_lag);
-      chan->channel.groupchange_op_sent = now;
+      chan->channel.groupchange.op_sent = now;
     }
   }
 }
@@ -889,7 +890,7 @@ static void got_go(char *botnick, char *code, char *par)
     return;
   struct chanset_t *chan = findchan_by_dname(par);
   if (chan && chan->channel.parttime)
-    chan->channel.groupchange_op_sent = now;
+    chan->channel.groupchange.op_sent = now;
 }
 
 cmd_t channels_bot[] = {

@@ -73,7 +73,9 @@ OBJS = auth.So \
 	mod/irc.mod/chan.So \
 	mod/irc.mod/cookie_codec.So \
 	mod/irc.mod/cmdsirc.So \
+	mod/irc.mod/group_change.So \
 	mod/irc.mod/irc.So \
+	mod/irc.mod/invite_shard.So \
 	mod/irc.mod/mode.So \
 	mod/irc.mod/pending_cookies.So \
 	mod/irc.mod/msgcmds.So \

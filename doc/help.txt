@@ -1948,6 +1948,11 @@ See also: die, conf, botcmd
     -Users will not see channels that are +s or +p unless they have op access there
  
 See also: find
+::time
+###  $btime$b
+   Shows your current timezone setting. Use '.tz' to change it.
+ 
+See also: tz
 :leaf:topic
 ###  $btopic$b [channel] [new topic]
    Changes the channel's topic, assuming the bot is a chanop or the
@@ -1973,6 +1978,14 @@ See also: bots, bottree
    Stats groups are IRC, Botnet, Partyline, Transfer.mod and Misc.
  
 %{+m}See also: restart%{-}
+::tz
+###  $btz$b [UTC+N / UTC-N / UTC+N:M / UTC]
+   Sets your timezone for partyline timestamps. Without arguments,
+   shows your current timezone.
+   Examples: .tz UTC+1, .tz UTC-5:30, .tz UTC
+   Setting is saved with your console settings.
+ 
+See also: time, store
 :leaf:umode
 ###  $bumode$b <+flags>
    Sets the given usermode flags for the bot.
@@ -2161,17 +2174,4 @@ See also: match, who, whom%{+m|m}, chattr, chaninfo%{-}
    channels will be shown.
  
 See also: who, chat%{+m}, bots%{-}
-::tz
-###  $btz$b [UTC+N / UTC-N / UTC+N:M / UTC]
-   Sets your timezone for partyline timestamps. Without arguments,
-   shows your current timezone.
-   Examples: .tz UTC+1, .tz UTC-5:30, .tz UTC
-   Setting is saved with your console settings.
- 
-See also: time, store
-::time
-###  $btime$b
-   Shows your current timezone setting. Use '.tz' to change it.
- 
-See also: tz
 ::end

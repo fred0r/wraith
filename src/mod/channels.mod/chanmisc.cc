@@ -929,7 +929,11 @@ int channel_modify(char *result, struct chanset_t *chan, int items, char **item,
   if (!conf.bot->hub && (chan != chanset_default)) {
     // Check if groups changed or +/-backup set
     if (!restarting && !loading && (changed_groups || ((old_status ^ chan->status) & (CHAN_INACTIVE | CHAN_BACKUP)))) {
+      if (changed_groups)
+        group_change::begin(chan);
       check_shouldjoin(chan, changed_groups);
+      if (changed_groups && me_op(chan))
+        group_change::invite_peers(chan, true, true);
     }
     if (me_op(chan)) {
       if ((old_status ^ chan->status) & (CHAN_ENFORCEBANS|CHAN_NOUSERBANS|CHAN_DYNAMICBANS|CHAN_NOUSEREXEMPTS|CHAN_NOUSERINVITES|CHAN_DYNAMICEXEMPTS|CHAN_DYNAMICINVITES)) {
@@ -972,9 +976,7 @@ static void init_channel(struct chanset_t *chan, bool reset)
   chan->channel.limit_stable = now;   /* let the limit settle after (re)joining */
   chan->channel.limit_changed = 0;
   chan->channel.parttime = 0;
-  chan->channel.groupchange_op_sent = 0;
-  chan->channel.groupchange_pending = false;
-  chan->channel.groupchange_timer = 0;
+  chan->channel.groupchange.reset();
 
   if (!reset)
     my_setkey(chan, NULL);
@@ -1080,11 +1082,11 @@ void clear_channel(struct chanset_t *chan, bool reset)
     timer_destroy(chan->op_delegation_flush_timer);
     chan->op_delegation_flush_timer = 0;
   }
-  if (chan->channel.groupchange_timer) {
-    timer_destroy(chan->channel.groupchange_timer);
-    chan->channel.groupchange_timer = 0;
+  if (chan->channel.groupchange.timer) {
+    timer_destroy(chan->channel.groupchange.timer);
+    chan->channel.groupchange.timer = 0;
   }
-  chan->channel.groupchange_pending = false;
+  chan->channel.groupchange.pending = false;
 
   if (reset)
     init_channel(chan, 1);

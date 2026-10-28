@@ -3072,7 +3072,8 @@ static int gotjoin(char *from, char *chname)
            * the first op is opped now instead of on the 10s timer. */
           rebalance_roles_chan(chan);
           if (!chan_hasop(m) && !chan_sentop(m) && is_bot(m->user) && chk_op(fr, chan) &&
-              ((chan->role & ROLE_OP) || chan->initial_bot_join)) {
+              (group_change::op_window_active(chan) ? group_change::is_op_owner(chan)
+                  : ((chan->role & ROLE_OP) || chan->initial_bot_join))) {
             do_op(m, chan, 0, 0);
             flush_mode(chan, QUICK);
           }
@@ -3081,8 +3082,8 @@ static int gotjoin(char *from, char *chname)
            * Don't require bot_shouldjoin() here: the new-group bot may join before
            * its groups variable has been synced to this bot. As long as it has op
            * flags, give it op so the channel doesn't lose all ops when we part. */
-          if (!chan_hasop(m) && !chan_sentop(m) && chan->channel.groupchange_pending &&
-              is_bot(m->user) && chk_op(fr, chan)) {
+          if (!chan_hasop(m) && !chan_sentop(m) && chan->channel.groupchange.pending &&
+              is_bot(m->user) && chk_op(fr, chan) && group_change::is_op_owner(chan)) {
             do_op(m, chan, 0, 0);
             flush_mode(chan, QUICK);
             /* The server's +o echo (got_op) confirms the replacement before

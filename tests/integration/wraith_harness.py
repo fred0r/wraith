@@ -318,12 +318,19 @@ class LinkedWraithHarness:
     PEER = "peerbot"
     CHANNEL = "#wraith-test"
 
-    def __init__(self, leaves=None, binaries=None, channel_options=None):
+    def __init__(self, leaves=None, binaries=None, channel_options=None,
+                 bot_groups=None, initially_joined=None, add_hostmasks=False):
         self.leaves = tuple(leaves or (self.LEAF,))
         self.binaries = dict(binaries or {})
         self.channel_options = channel_options or "+fastop groups oldgroup"
+        self.bot_groups = dict(bot_groups or {})
+        self.initially_joined = tuple(
+            self.leaves if initially_joined is None else initially_joined)
+        self.add_hostmasks = add_hostmasks
         if len(set(self.leaves)) != len(self.leaves):
             raise ValueError("leaf names must be unique")
+        if any(leaf not in self.leaves for leaf in self.initially_joined):
+            raise ValueError("initially_joined must name configured leaves")
         self.tempdir = None
         self.root = None
         self.hub_dir = None
@@ -457,6 +464,10 @@ class LinkedWraithHarness:
                 ".newleaf %s %s"
                 % (leaf, self._leaf_link_masks(username))
             )
+            if self.add_hostmasks:
+                commands.append(
+                    ".+host %s *!%s@%s.host" % (leaf, leaf, leaf)
+                )
         commands.extend([
             ".newleaf %s -telnet!peer@peerhost" % self.PEER,
             ".+host %s *!peer@peerhost" % self.PEER,
@@ -465,7 +476,8 @@ class LinkedWraithHarness:
             ".set server-cycle-wait 1",
         ])
         for leaf in self.leaves:
-            commands.append(".botset %s -YES groups oldgroup" % leaf)
+            commands.append(".botset %s -YES groups %s"
+                            % (leaf, self.bot_groups.get(leaf, "oldgroup")))
         for command in commands:
             self.hub.write(command + "\n")
             time.sleep(0.35)
@@ -496,16 +508,17 @@ class LinkedWraithHarness:
                 ) from exc
             self.fake_irc.wait_connected(timeout=45, nick=leaf)
             self.fake_irc.wait_for_line("MODE %s +" % leaf, timeout=20, nick=leaf)
-            self.fake_irc.wait_for_line(
-                "JOIN %s" % self.CHANNEL, timeout=45, nick=leaf)
-            self.fake_irc.wait_for_line(
-                "WHO %s" % self.CHANNEL, timeout=45, nick=leaf)
-            self.fake_irc.wait_for_sent(
-                lambda line: line.startswith(":fake.irc 315 "), 0,
-                timeout=20, description="end of linked WHO", nick=leaf,
-            )
+            if leaf in self.initially_joined:
+                self.fake_irc.wait_for_line(
+                    "JOIN %s" % self.CHANNEL, timeout=45, nick=leaf)
+                self.fake_irc.wait_for_line(
+                    "WHO %s" % self.CHANNEL, timeout=45, nick=leaf)
+                self.fake_irc.wait_for_sent(
+                    lambda line: line.startswith(":fake.irc 315 "), 0,
+                    timeout=20, description="end of linked WHO", nick=leaf,
+                )
             self._wait_ready(leaf)
-        for leaf in self.leaves:
+        for leaf in self.initially_joined:
             self.fake_irc.send_mode(self.CHANNEL, "+o", leaf)
         for leaf in self.leaves:
             self._wait_ready(leaf)

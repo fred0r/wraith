@@ -1410,85 +1410,13 @@ raise_limit(struct chanset_t *chan, int default_limitraise)
   return false;
 }
 
-bool groupchange_replacement_opped(struct chanset_t* chan)
-{
-  if (!chan)
-    return false;
-
-  for (memberlist *m = chan->channel.member; m && m->nick[0]; m = m->next) {
-    if (m->is_me || m->split || !chan_hasop(m) || !member_getuser(m) ||
-        !is_bot(m->user))
-      continue;
-
-    struct flag_record fr = { FR_CHAN|FR_GLOBAL|FR_BOT, 0, 0, 0 };
-    get_user_flagrec(m->user, &fr, chan->dname, chan);
-    if (chk_op(fr, chan) && bot_shouldjoin(m->user, &fr, chan))
-      return true;
-  }
-
-  return false;
-}
-
-static void groupchange_op_new_members(struct chanset_t* chan)
-{
-  if (!me_op(chan))
-    return;
-
-  struct flag_record fr = { FR_CHAN|FR_GLOBAL|FR_BOT, 0, 0, 0 };
-
-  for (memberlist *m = chan->channel.member; m && m->nick[0]; m = m->next) {
-    if (m->is_me || m->split || chan_hasop(m) || chan_sentop(m) ||
-        !member_getuser(m) || !is_bot(m->user))
-      continue;
-
-    get_user_flagrec(m->user, &fr, chan->dname, chan);
-    if (chk_op(fr, chan) && bot_shouldjoin(m->user, &fr, chan))
-      do_op(m, chan, 0, 0);
-  }
-
-  flush_mode(chan, QUICK);
-}
-
-static void groupchange_send_go(struct chanset_t* chan)
-{
-  if (chan->channel.groupchange_op_sent)
-    return;
-
-  chan->channel.groupchange_op_sent = now;
-
-  char go_msg[120];
-  simple_snprintf(go_msg, sizeof(go_msg), "go %s", chan->dname);
-  putallbots(go_msg);
-}
-
-void check_shouldjoin(struct chanset_t* chan, bool group_change)
+void check_shouldjoin(struct chanset_t* chan, bool from_group_change)
 {
   if ((channel_active(chan) || channel_pending(chan)) && !shouldjoin(chan)) {
-    if (group_change || chan->channel.groupchange_pending) {
-      if (!chan->channel.groupchange_pending) {
-        putlog(LOG_WARNING, "*",
-            "Group change for %s: waiting for an opped replacement bot",
-            chan->dname);
-      }
-      chan->channel.groupchange_pending = true;
-
-      /* One opped bot in the new groups is enough to protect the channel. */
-      if (groupchange_replacement_opped(chan)) {
-        groupchange_send_go(chan);
-        chan->channel.parttime = now;
-        schedule_groupchange_check(chan, 1);
-        return;
-      }
-
-      /* Keep the old bot in place until a replacement is opped. */
-      groupchange_op_new_members(chan);
-      groupchange_send_go(chan);
-      chan->channel.parttime = 0;
-      schedule_groupchange_check(chan, 10);
+    if (group_change::handle_leave(chan, from_group_change))
       return;
-    }
 
-    if (!chan->channel.groupchange_op_sent) {
+    if (!chan->channel.groupchange.op_sent) {
       /* Non-group leave, including +inactive/-backup. */
       if (me_op(chan)) {
         struct flag_record fr = { FR_CHAN|FR_GLOBAL|FR_BOT, 0, 0, 0 };
@@ -1501,7 +1429,7 @@ void check_shouldjoin(struct chanset_t* chan, bool group_change)
         }
         flush_mode(chan, QUICK);
       }
-      chan->channel.groupchange_op_sent = now;
+      chan->channel.groupchange.op_sent = now;
       {
         char go_msg[120];
         simple_snprintf(go_msg, sizeof(go_msg), "go %s", chan->dname);
@@ -1511,11 +1439,7 @@ void check_shouldjoin(struct chanset_t* chan, bool group_change)
       chan->channel.parttime = now + 5;
     }
   } else if (shouldjoin(chan)) {
-    if (chan->channel.groupchange_pending) {
-      chan->channel.groupchange_pending = false;
-      chan->channel.parttime = 0;
-      chan->channel.groupchange_op_sent = 0;
-    }
+    group_change::finish(chan);
     join_chan(chan);
   } else if (channel_inactive(chan)) {
     /* Channel is +inactive but bot's group now matches — clear inactive and join */

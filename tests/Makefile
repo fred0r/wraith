@@ -31,6 +31,7 @@ TEST_SOURCES := \
 	crypto/CryptoTest.cpp \
 	update/UpdateStreamTest.cpp \
 	link/EnclinkTest.cpp \
+	irc/InviteShardTest.cpp \
 	cookie/CookieCodecTest.cpp \
 	cookie/CookieDifferentialTest.cpp \
 	cookie/LegacyCookieReference.cpp \
@@ -45,6 +46,7 @@ PROD_SOURCES := \
 	$(ROOT)/src/crypto/chacha_util.cc \
 	$(ROOT)/src/crypto/dh_util.cc \
 	$(ROOT)/src/mod/update.mod/update_stream.cc \
+	$(ROOT)/src/mod/irc.mod/invite_shard.cc \
 	$(ROOT)/src/enclink_util.cc \
 	$(ROOT)/src/mod/irc.mod/cookie_codec.cc \
 	$(ROOT)/src/mod/irc.mod/pending_cookies.cc \

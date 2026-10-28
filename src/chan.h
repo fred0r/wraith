@@ -162,6 +162,30 @@ public:
 
 static_assert(sizeof(MaskList) == sizeof(maskrec), "MaskList must not change maskrec layout");
 
+struct GroupChangeState {
+  time_t op_started;
+  time_t op_sent;
+  time_t invite_started;
+  time_t invite_pulled;
+  char op_owner[HANDLEN + 1];
+  bool pending;
+  int timer;
+
+  void reset() {
+    op_started = 0;
+    op_sent = 0;
+    invite_started = 0;
+    invite_pulled = 0;
+    op_owner[0] = 0;
+    pending = false;
+    timer = 0;
+  }
+
+  bool op_window_active(time_t at) const {
+    return op_started && (at - op_started) <= 120;
+  }
+};
+
 /* For every channel i join */
 struct chan_t {
   memberlist *member;
@@ -170,14 +194,11 @@ struct chan_t {
   masklist *invite;
   time_t jointime;
   time_t parttime;
-  time_t groupchange_op_sent;  /* when this bot (or a peer via 'go' msg) last sent group-change ops */
-  bool groupchange_pending;    /* waiting for a replacement-group bot to be opped */
-  int groupchange_timer;       /* 1s finish/retry timer for group changes */
+  GroupChangeState groupchange;
   time_t no_op;
   time_t drone_jointime;
   time_t invite_retry;         /* when to re-request an invite while waiting to join a +i chan */
   int invite_retry_ct;         /* consecutive invite re-requests (bounded burst)             */
-  time_t invite_pull;          /* last time an opped bot pulled its group peers in           */
   time_t limit_stable;         /* last membership/op change; +l/-l bounce must settle first  */
   time_t limit_changed;        /* last time we emitted a +l/-l on this channel               */
   time_t last_eI;      /* this will stop +e and +I from being checked over and over if the bot is stuck in a

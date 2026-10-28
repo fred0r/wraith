@@ -7,6 +7,7 @@
 #define _EGG_MOD_IRC_IRC_H
 
 #include "src/chanprog.h"
+#include "group_change.h"
 #include "module.h"
 
 class IrcModule : public wraith::Module {
@@ -178,8 +179,7 @@ void irc_report(int, int);
 void flush_modes();
 void reset_chan_info(struct chanset_t *);
 char *getnick(const char *, struct chanset_t *);
-void check_shouldjoin(struct chanset_t* chan, bool group_change = false);
-bool groupchange_replacement_opped(struct chanset_t* chan);
+void check_shouldjoin(struct chanset_t* chan, bool from_group_change = false);
 void delete_member(memberlist* m);
 void store_pending_cookie(struct chanset_t *chan, memberlist *opper,
     memberlist *opped, const char *cookie, int indexHint);
