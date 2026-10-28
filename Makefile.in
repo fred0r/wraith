@@ -62,7 +62,7 @@ MAKE_UTILS = $(MAKE) 'MAKE=$(MAKE)' 'CXX=$(CXX)' 'CC=$(CC)' 'STRIP=touch' 'INCLU
 'CCDEPMODE=$(CCDEPMODE)' 'DEBLDFLAGS=$(DEBLDFLAGS)' \
 'CXXFLAGS=$(CXXFLAGS) $(DEBCXXFLAGS)' 'CFLGS=$(CFLGS) $(DEBCXXFLAGS)' 'LIBS=$(LIBS)' 'LD=$(LD_DEBUG) -g'
 
-.PHONY: checkclean.dynamic checkclean.debug lib wraith lib.debug debug test test-bdlib test-wraith test-asan general sorthelp sort indent tar distrib distclean clean cleanutils test all dynamic tags libdefs
+.PHONY: checkclean.dynamic checkclean.debug lib wraith lib.debug debug test test-bdlib test-wraith test-asan test-ubsan test-integration test-integration-crossversion general sorthelp sort indent tar distrib distclean clean cleanutils test all dynamic tags libdefs
 
 all: dynamic
 
@@ -84,12 +84,29 @@ test-asan:
 	+@$(MAKE) -C tests test-asan 'CXX=$(CXX)' 'CXXFLAGS=$(CXXFLAGS)' \
 		'LDFLAGS=$(LDFLAGS)' 'LIBS=$(LIBS)'
 
+test-ubsan:
+	+@$(MAKE) -C tests test-ubsan 'CXX=$(CXX)' 'CXXFLAGS=$(CXXFLAGS)' \
+		'LDFLAGS=$(LDFLAGS)' 'LIBS=$(LIBS)'
+
+test-integration:
+	+@$(MAKE) dynamic
+	@python3 -m unittest discover -s tests/integration -v
+
+test-integration-crossversion:
+	+@$(MAKE) dynamic
+	@test -n "$(WRAITH_OLD_BINARY)" || \
+		{ echo "Set WRAITH_OLD_BINARY to a pre-refactor wraith binary"; exit 1; }
+	@WRAITH_OLD_BINARY="$(WRAITH_OLD_BINARY)" \
+		python3 -m unittest discover -s tests/integration \
+		-p 'test_irc_crossversion.py' -v
+
 cleanutils:
 	@rm -f src/sorthelp@EXEEXT@
 
 clean:  cleanutils
 	+@cd src && $(MAKE) clean
 	+@$(MAKE) -C tests clean
+	@rm -rf tests/integration/__pycache__
 	-+@cd lib && $(MAKE) clean
 	@rm -f src/.defs/*.stamp
 	@rm -f $(BINEXEC) build/stamp.* *~ src/*~ configure.temp .mangled stamp.*
@@ -184,7 +201,7 @@ src/.defs/exports: Makefile \
 
 general: libdefs src/.defs/exports
 
-.NOTPARALLEL: checkclean.dynamic checkclean.debug test test-bdlib test-wraith
+.NOTPARALLEL: checkclean.dynamic checkclean.debug test test-bdlib test-wraith test-integration test-integration-crossversion
 
 checkclean.dynamic:
 	@(if test -f build/stamp.debug; then \

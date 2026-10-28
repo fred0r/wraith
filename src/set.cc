@@ -733,6 +733,18 @@ void init_vars()
     if (!vars[i].gdata && !vars[i].ldata && !(!conf.bot->hub && (vars[i].flags & VAR_NOLDEF)))
       var_set(&vars[i], NULL, NULL);		//empty out and set to defaults
   }
+
+  const char *test_servers = getenv("WRAITH_TEST_SERVERS");
+  if (test_servers && test_servers[0] && !conf.bot->hub)
+    var_set_by_name(NULL, "servers", test_servers);
+
+  const char *test_groups = getenv("WRAITH_TEST_GROUPS");
+  if (test_groups && test_groups[0] && !conf.bot->hub)
+    var_set_by_name(NULL, "groups", test_groups);
+
+  const char *test_msgrate = getenv("WRAITH_TEST_MSGRATE");
+  if (test_msgrate && test_msgrate[0] && !conf.bot->hub)
+    var_set_by_name(NULL, "msgrate", test_msgrate);
 }
 
 /* This is used to parse (GLOBAL) userfile var lines and changes via .set from a remote hub */

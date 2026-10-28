@@ -13,7 +13,9 @@ TARGETS=	\
 		test-bdlib \
 		test-wraith \
 		test-asan \
+		test-ubsan \
 		test-integration \
+		test-integration-crossversion \
 		check
 
 .for target in ${TARGETS}

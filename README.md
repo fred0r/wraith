@@ -176,17 +176,33 @@ used.
 
 ```sh
 gmake test                 # unit tests
+gmake test-ubsan           # UBSan only
 gmake test-asan            # AddressSanitizer + UBSan
 gmake test-integration     # fake IRC, linked-bot, and cookie tests
 ```
 
 Use `make` instead of `gmake` on Linux.
 
-- `make test` requires CppUnit >= 1.14 and `pkg-config`.
+The optional old/new cookie interoperability gate needs a binary built before
+the cookie codec refactor:
+
+```sh
+tests/integration/build_legacy_wraith.sh /tmp/wraith-old
+WRAITH_OLD_BINARY=/tmp/wraith-old/wraith make test-integration-crossversion
+```
+
+The script builds commit `2d2b3bfb`. On systems where `make` is BSD make, run
+it with `MAKE=gmake`.
+
+- `make test` and `make test-ubsan` require CppUnit >= 1.14 and `pkg-config`.
 - `make test-integration` requires Python 3 and must not run as root.
-- `make test-asan` runs ASan/UBSan. FreeBSD does not support LeakSanitizer,
-  so leak detection is enabled only on Linux. Use Valgrind if leak checking
-  is needed on FreeBSD.
+- `make test-integration-crossversion` additionally requires
+  `WRAITH_OLD_BINARY`.
+- `make test-ubsan` runs UBSan without ASan shadow memory and works on
+  restricted hosts.
+- `make test-asan` requires unlimited virtual-memory and data-size limits.
+  FreeBSD does not support LeakSanitizer, so leak detection is enabled only
+  on Linux. Use `test-ubsan` or Valgrind when those limits cannot be raised.
 
 ### Cleaning
 

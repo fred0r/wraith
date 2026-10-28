@@ -26,6 +26,7 @@
 
 
 #include "irc_shared.h"
+#include "cookie_codec.h"
 
 namespace {
 
@@ -73,6 +74,55 @@ bool include_lk = 1;      /* For correct calculation
                                  * in real_add_mode. */
 static bd::HashTable<bd::String, unsigned long> bot_counters;
 unsigned long my_cookie_counter = 0;
+
+static bd::String cookie_md5(const bd::String& input)
+{
+  return MD5(input.c_str());
+}
+
+static const irc_cookie::Crypto cookie_crypto = {
+  cookie_md5,
+  encrypt_string,
+  decrypt_string
+};
+
+static irc_cookie::Member cookie_member(const memberlist* member)
+{
+  irc_cookie::Member result;
+
+  result.nick = member->nick;
+  result.userhost = member->userhost;
+  if (member->user)
+    result.handle = member->user->handle;
+
+  return result;
+}
+
+static irc_cookie::CookieContext cookie_context(const char* chname,
+    const memberlist* opper)
+{
+  const char salt1[] = SALT1;
+  const char salt2[] = SALT2;
+  irc_cookie::CookieContext context;
+
+  context.channel = chname;
+  context.opper = cookie_member(opper);
+  context.salt1 = salt1;
+  context.salt2 = salt2;
+  context.now = now + timesync;
+  context.opper_is_self = (conf.bot->u == opper->user);
+
+  return context;
+}
+
+static_assert(irc_cookie::CHECK_NOCOOKIE == BC_NOCOOKIE,
+    "cookie result enum mismatch");
+static_assert(irc_cookie::CHECK_SLACK == BC_SLACK,
+    "cookie result enum mismatch");
+static_assert(irc_cookie::CHECK_HASH == BC_HASH,
+    "cookie result enum mismatch");
+static_assert(irc_cookie::CHECK_COUNTER == BC_COUNTER,
+    "cookie result enum mismatch");
 
 std::deque<bd::String> chained_who;
 int chained_who_idx;
@@ -408,127 +458,41 @@ void cache_invite(struct chanset_t *chan, const char *nick,
   dprintf(DP_SERVER, "INVITE %s %s\n", nick, chan->name);
 }
 
-static inline const char * cookie_hash(const char* chname, const memberlist* opper, const memberlist* opped, const char* ts, const char* randstring, const char* key) {
-  char tohash[201] = "";
-  const char salt2[] = SALT2;
-
-  simple_snprintf(tohash, sizeof(tohash), STR("%c%s%c%c%c\n%c%c%s%s%s"),
-                                     salt2[0],
-                                     ts,
-                                     randstring[0], randstring[1], randstring[2], randstring[3],
-                                     salt2[15],
-                                     opped->nick,
-                                     opped->userhost,
-                                     key);
-#ifdef DEBUG
-sdprintf("chname: %s ts: %s randstring: %c%c%c%c", chname, ts, randstring[0], randstring[1], randstring[2], randstring[3]);
-sdprintf("tohash: %s", tohash);
-#endif
-  const char* md5 = MD5(tohash);
-  OPENSSL_cleanse(tohash, sizeof(tohash));
-  return md5;
-}
-
-static inline void cookie_key(char *key, size_t key_len, const char* randstring, const memberlist *opper, const char *chname) {
-  const char salt1[] = SALT1;
-  const char salt2[] = SALT2;
-  simple_snprintf2(key, key_len, STR("%c%c%c%^s%c%c%c%c%c%c%^s%c%c%c%c%c%c%c%s"),
-                                        randstring[0],
-                                        salt1[5],
-                                        randstring[3],
-                                        opper->user->handle,
-                                        randstring[2],
-                                        salt1[4],
-                                        salt1[0],
-                                        salt1[1],
-                                        salt1[3],
-                                        salt1[6],
-                                        chname,
-                                        salt1[10],
-                                        randstring[1],
-                                        salt2[15],
-                                        salt2[13],
-                                        salt1[10],
-                                        salt2[3],
-                                        salt2[1],
-                                        opper->userhost
-                                        );
-}
-
-#define HASH_INDEX1(_x) (8 + (_x))
-#define HASH_INDEX2(_x) (16 + (_x))
-#define HASH_INDEX3(_x) (18 + (_x))
-
 void makecookie(char *out, size_t len, const char *chname, const memberlist* opper, const memberlist* m1, const memberlist* m2, const memberlist* m3) {
-  char randstring[5] = "", ts[11] = "";
+  if (!m1) {
+    if (out && len)
+      out[0] = '\0';
+    return;
+  }
+
+  char randstring[5] = "";
 
   make_rand_str(randstring, 4);
-  /* &ts[4] is now last 6 digits of time */
-  simple_snprintf(ts, sizeof(ts), "%010li", (long) (now + timesync));
-
-  char cookie_clear[101] = "";
 
   //Increase my counter
   ++my_cookie_counter;
   if (my_cookie_counter > (unsigned long)(-500))
     my_cookie_counter = 0;
-  simple_snprintf2(cookie_clear, sizeof(cookie_clear), STR("%s%s%D"), randstring, &ts[3], my_cookie_counter);
 
-  char key[150] = "";
-  cookie_key(key, sizeof(key), randstring, opper, chname);
+  irc_cookie::Member opped[3];
+  size_t opped_count = 1;
 
-  const char* hash1 = cookie_hash(chname, opper, m1, &ts[4], randstring, key);
-  const char* hash2 = m2 ? cookie_hash(chname, opper, m2, &ts[4], randstring, key) : NULL;
-  const char* hash3 = m3 ? cookie_hash(chname, opper, m3, &ts[4], randstring, key) : NULL;
-  bd::String cookie = encrypt_string(MD5(key), bd::String(cookie_clear));
-  bd::String encoded_cookie;
-  if (!bd::base64Encode(cookie, encoded_cookie)) {
-    if (out && len)
-      out[0] = '\0';
-    return;
+  opped[0] = cookie_member(m1);
+  if (m2) {
+    opped[1] = cookie_member(m2);
+    opped_count = 2;
   }
-  cookie = encoded_cookie;
-#ifdef DEBUG
-sdprintf("key: %s", key);
-sdprintf("cookie_clear: %s", cookie_clear);
-sdprintf("hash1: %s", hash1);
-if (hash2) sdprintf("hash2: %s", hash2);
-if (hash3) sdprintf("hash3: %s", hash3);
-#endif
+  if (m3) {
+    opped[2] = cookie_member(m3);
+    opped_count = 3;
+  }
 
-  if (m3)
-    simple_snprintf(out, len, STR("%c%c%c%c%c%c%c%c%c!%s@%s"), 
-                         hash1[HASH_INDEX1(0)], 
-                         hash1[HASH_INDEX2(0)], 
-                         hash1[HASH_INDEX3(0)], 
-                         hash2[HASH_INDEX1(1)], 
-                         hash2[HASH_INDEX2(1)], 
-                         hash2[HASH_INDEX3(1)], 
-                         hash3[HASH_INDEX1(2)], 
-                         hash3[HASH_INDEX2(2)], 
-                         hash3[HASH_INDEX3(2)], 
-                         randstring, 
-                         cookie.c_str());
-  else if (m2)
-    simple_snprintf(out, len, STR("%c%c%c%c%c%c!%s@%s"), 
-                         hash1[HASH_INDEX1(0)], 
-                         hash1[HASH_INDEX2(0)], 
-                         hash1[HASH_INDEX3(0)], 
-                         hash2[HASH_INDEX1(1)], 
-                         hash2[HASH_INDEX2(1)], 
-                         hash2[HASH_INDEX3(1)], 
-                         randstring, 
-                         cookie.c_str());
-  else
-    simple_snprintf(out, len, STR("%c%c%c!%s@%s"), 
-                         hash1[HASH_INDEX1(0)], 
-                         hash1[HASH_INDEX2(0)], 
-                         hash1[HASH_INDEX3(0)], 
-                         randstring, 
-                         cookie.c_str());
-#ifdef DEBUG
-sdprintf("cookie: %s", out);
-#endif
+  const irc_cookie::CookieContext context = cookie_context(chname, opper);
+  const bd::String cookie = irc_cookie::make_cookie(context, opped,
+      opped_count, bd::String(randstring, 4), my_cookie_counter, cookie_crypto);
+
+  if (out && len)
+    simple_snprintf(out, len, "%s", cookie.c_str());
 }
 
 // Clear counter for bot
@@ -537,112 +501,24 @@ void counter_clear(const char* botnick) {
 }
 
 int checkcookie(const char *chname, const memberlist* opper, const memberlist* opped, const char *cookie, int indexHint) {
-#define HOST(_x) (6 + (_x) + ((hashes << 1) + hashes)) /* x + (hashes * 3) */
-#define SALT(_x) (1 + (_x) + ((hashes << 1) + hashes)) /* x + (hashes * 3) */
-  if (!cookie)
-    return BC_HASH;
-
-  const size_t cookie_len = strlen(cookie);
-  size_t hashes = 0;
-
-  /* The hash count is taken from the first '!' marker. Validate the
-   * minimum prefix before indexing so a short MODE cookie cannot read
-   * past the string. */
-  if (cookie_len > 3 && cookie[3] == '!')
-    hashes = 1;
-  else if (cookie_len > 6 && cookie[6] == '!')
-    hashes = 2;
-  else if (cookie_len > 9 && cookie[9] == '!')
-    hashes = 3;
-  else
-    return BC_HASH;
-
-  if (cookie_len <= HOST(0))
-    return BC_HASH;
-
-  char key[150] = "";
-  const char *randstring = &cookie[SALT(0)];
-
-  cookie_key(key, sizeof(key), randstring, opper, chname);
-
-  bd::String encoded_cookie(&cookie[HOST(0)]);
-  bd::String ciphertext;
-  if (!bd::base64Decode(encoded_cookie, ciphertext, false))
-    return BC_HASH;
-
-  bd::String cleartext = decrypt_string(MD5(key), ciphertext);
-  if (cleartext.length() < 4 + 7 + 1)
-    return BC_HASH;
-
-  char ts[8] = "";
-  strlcpy(ts, cleartext.c_str() + 4, sizeof(ts));
-  unsigned long counter = base64_to_int(cleartext.c_str() + 4 + 7);
-
-  //Lookup counter for the opper
-  unsigned long last_counter = 0;
-  // Don't check counter for my own ops as it may have incremented in the queue before seeing the last last counter
+  const irc_cookie::CookieContext context = cookie_context(chname, opper);
   bd::String handle;
-  if (conf.bot->u != opper->user) {
+  unsigned long last_counter = 0;
+
+  // Don't check counter for my own ops as it may have incremented in the queue before seeing the last last counter
+  if (!context.opper_is_self) {
     handle = opper->user->handle;
     if (const unsigned long *last = bot_counters.try_get(handle))
       last_counter = *last;
   }
 
-#ifdef DEBUG
-sdprintf("key: %s", key);
-sdprintf("plaintext from cookie: %s", cleartext.c_str());
-sdprintf("ts from cookie: %s", ts);
-if (indexHint == 0) {
-  sdprintf("last counter from %s: %lu", opper->user->handle, last_counter);
-  sdprintf("counter from cookie: %lu", counter);
-}
-#endif
+  const irc_cookie::CheckResult result = irc_cookie::check_cookie(context,
+      cookie_member(opped), cookie, indexHint, last_counter, cookie_crypto);
 
-  /* Hash check runs BEFORE time check. If the key is wrong (stale
-   * opper->userhost), decryption produces garbage and atol() on garbage
-   * gives a random timestamp, causing BC_SLACK. Checking the hash first
-   * ensures wrong keys are caught as BC_HASH instead. */
-  const char *hash = cookie_hash(chname, opper, opped, &ts[1], randstring, key);
-#ifdef DEBUG
-sdprintf("hash: %s", hash);
-#endif
+  if (result.store_counter)
+    bot_counters[handle] = result.counter;
 
-  /* Compare the expected hash to each of the given hashes */
-  /* indexHint, Which position of the +ooo are we? (1) could be either index (1) or (2).. but not (0). */
-
-  /* See if any of the cookies match the hash we want */
-  for (size_t i = indexHint; i < hashes; ++i) {
-    const char *cookie_index = cookie + ((i << 1) + i); /* i * 3 */
-
-    if ((hash[HASH_INDEX1(i)] == cookie_index[0] && 
-         hash[HASH_INDEX2(i)] == cookie_index[1] && 
-         hash[HASH_INDEX3(i)] == cookie_index[2])) {
-      /* Hash matched -- now check time */
-      const time_t optime = atol(ts);
-      if ((((now + timesync) % 10000000) - optime) > 3900)
-        return BC_SLACK;
-
-      //Only check on the first cookie
-      if (indexHint == 0 && conf.bot->u != opper->user) {
-        if (counter <= last_counter)
-          return BC_COUNTER;
-
-        // graceful overflow
-        if (counter > (unsigned long)(-1000))
-          counter = 0;
-
-        //Update counter for the opper
-        bot_counters[handle] = counter;
-      }
-
-      return 0;
-    }
-  }
-
-  /* None matched -> failure */
-  return BC_HASH;
-#undef HOST
-#undef SALT
+  return static_cast<int>(result.code);
 }
 
 /*
